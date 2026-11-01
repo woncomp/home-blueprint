@@ -163,17 +163,19 @@ export class Scene3D {
 
   // ---------- 墙 ----------
   buildWalls() {
+    const footprints = computeWallFootprints(this.data.walls);
     for (const wall of this.data.walls) {
-      const len = wallLen(wall);
       const h = wall.height || 2.8;
-      const t = wall.thickness || 0.2;
-      const geo = new THREE.BoxGeometry(len, h, t);
+      const fp = footprints.get(wall.id);
+      if (!fp || fp.length < 3) continue;
+      const shape = new THREE.Shape();
+      fp.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z)));
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+      geo.rotateX(Math.PI / 2); // Shape 在 XY 平面，转到 XZ；拉伸方向变为 -Y
+      geo.translate(0, h, 0);   // 抬起为 y ∈ [0, h]
       const mat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, transparent: true, opacity: 0.88 });
       const mesh = new THREE.Mesh(geo, mat);
-      const mx = (wall.start[0] + wall.end[0]) / 2;
-      const mz = (wall.start[1] + wall.end[1]) / 2;
-      mesh.position.set(mx, h / 2, mz);
-      mesh.rotation.y = -Math.atan2(wall.end[1] - wall.start[1], wall.end[0] - wall.start[0]);
       const isSel = this.selected && this.selected.kind === 'wall' && this.selected.id === wall.id;
       // 编辑模式高亮整面墙（用于删除）；查看模式只高亮选中的那一面
       if (isSel && this.mode === 'edit') mat.color.set(0x6fa8dc);
@@ -387,6 +389,116 @@ export class Scene3D {
     this.controls.tick(dt);
     this.renderer.render(this.scene, this.camera);
   }
+}
+
+// ---------- 墙体俯视轮廓（拐角直角对接、T 型平齐） ----------
+
+const JOIN_EPS = 0.01;                    // 端点吸附阈值（米）
+const MITER_MIN_SIN = Math.sin(Math.PI / 9); // 两墙接近共线时视为直墙延续
+
+function cross2(a, b) { return a[0] * b[1] - a[1] * b[0]; }
+
+function pointSegDist(p, a, b) {
+  const abx = b[0] - a[0], abz = b[1] - a[1];
+  const l2 = abx * abx + abz * abz;
+  if (l2 < 1e-12) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * abz) / l2));
+  return Math.hypot(p[0] - (a[0] + abx * t), p[1] - (a[1] + abz * t));
+}
+
+function signedArea2(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
+    a += x1 * z2 - x2 * z1;
+  }
+  return a / 2;
+}
+
+// 端部回退 back 后的平切角点（u 指向墙外）
+function trimCorners(cur, P, u, back) {
+  const cx = P[0] - u[0] * back, cz = P[1] - u[1] * back;
+  return [
+    [cx + cur.nu[0] * cur.s, cz + cur.nu[1] * cur.s],
+    [cx - cur.nu[0] * cur.s, cz - cur.nu[1] * cur.s],
+  ];
+}
+
+// 计算某墙某端以「指向墙外方向 u」为基准的左/右角点
+function endCorners(cur, P, u, sharers, throughs) {
+  const leftBase = [P[0] + cur.nu[0] * cur.s, P[1] + cur.nu[1] * cur.s];
+  const rightBase = [P[0] - cur.nu[0] * cur.s, P[1] - cur.nu[1] * cur.s];
+
+  // 有共线的接续墙（直墙延续）→ 平切
+  const straight = sharers.some(sh => Math.abs(cross2(u, sh.v)) < MITER_MIN_SIN && u[0] * sh.v[0] + u[1] * sh.v[1] < 0);
+  if (straight) return [leftBase, rightBase];
+
+  if (sharers.length === 1) {
+    const { oth, v } = sharers[0];
+    if (Math.abs(cross2(u, v)) < MITER_MIN_SIN) return [leftBase, rightBase]; // 折叠尖角，平切
+    // 直角对接：id 较小的墙贯通（端部外延对方半厚，填满角部方块），
+    // 另一面墙回退对方半厚，端面平齐顶到贯通墙侧面
+    if (cur.w.id < oth.w.id) {
+      return [
+        [leftBase[0] + u[0] * oth.s, leftBase[1] + u[1] * oth.s],
+        [rightBase[0] + u[0] * oth.s, rightBase[1] + u[1] * oth.s],
+      ];
+    }
+    return trimCorners(cur, P, u, Math.min(oth.s, cur.len / 2));
+  }
+
+  if (sharers.length >= 2) {
+    // T 型（贯通墙为两段）或多墙交汇：回退平切，顶到对方墙面
+    const s2 = Math.max(...sharers.map(sh => sh.oth.s));
+    return trimCorners(cur, P, u, Math.min(s2, cur.len / 2));
+  }
+
+  if (throughs.length) {
+    // T 型头：端点落在另一墙内部，回退该墙半厚
+    const s2 = Math.max(...throughs.map(o => o.s));
+    return trimCorners(cur, P, u, Math.min(s2, cur.len / 2));
+  }
+
+  return [leftBase, rightBase]; // 自由端
+}
+
+// 返回 Map<wallId, [[x,z], ...]>：每面墙的俯视轮廓多边形（逆时针）
+function computeWallFootprints(walls) {
+  const info = walls.map(w => {
+    const len = wallLen(w);
+    const d = len > 1e-6 ? wallDir(w) : [1, 0];
+    return { w, len, d, s: (w.thickness || 0.2) / 2 };
+  });
+  const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < JOIN_EPS;
+
+  const result = new Map();
+  for (const cur of info) {
+    if (cur.len < 1e-6) continue;
+    const ends = [];
+    for (let e = 0; e < 2; e++) {
+      const P = e === 0 ? cur.w.start : cur.w.end;
+      const u = e === 0 ? [-cur.d[0], -cur.d[1]] : cur.d; // 指向墙外
+      cur.nu = [u[1], -u[0]];                             // 以 u 为基准的左法线
+      const sharers = [], throughs = [];
+      for (const oth of info) {
+        if (oth === cur || oth.len < 1e-6) continue;
+        const atStart = near(P, oth.w.start), atEnd = near(P, oth.w.end);
+        if (atStart || atEnd) {
+          const v = atStart ? oth.d : [-oth.d[0], -oth.d[1]]; // 沿对方墙指向节点外
+          sharers.push({ oth, v });
+        } else if (pointSegDist(P, oth.w.start, oth.w.end) < JOIN_EPS) {
+          throughs.push(oth);
+        }
+      }
+      const [leftU, rightU] = endCorners(cur, P, u, sharers, throughs);
+      // 统一换算成以 cur.d 为基准的左/右角：终点处一致，起点处左右互换
+      ends.push(e === 1 ? [leftU, rightU] : [rightU, leftU]);
+    }
+    let pts = [ends[0][0], ends[1][0], ends[1][1], ends[0][1]];
+    if (signedArea2(pts) < 0) pts = pts.reverse();
+    result.set(cur.w.id, pts);
+  }
+  return result;
 }
 
 function clearGroup(g) {
