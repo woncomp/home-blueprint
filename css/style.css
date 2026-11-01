@@ -35,7 +35,12 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 #plan-svg .grid-line { stroke: #e4e6ea; stroke-width: 1; }
 #plan-svg .grid-line-major { stroke: #ced2d9; stroke-width: 1; }
 #plan-svg .plan-node { fill: #9aa0a8; pointer-events: none; }
-#plan-svg .plan-box { fill: #3a4048; stroke: #fff; stroke-width: 1; pointer-events: none; }
+#plan-svg .plan-door-rect { fill: #fff; stroke: #8a929e; stroke-width: 1.2; pointer-events: none; }
+#plan-svg .plan-door-rect.hover { stroke: #4a90d9; }
+#plan-svg .plan-door-rect.selected { fill: #d6e6f7; stroke: #4a90d9; stroke-width: 1.8; }
+#plan-svg .plan-box-rect { fill: #f0a13c; stroke: #fff; stroke-width: 1.2; pointer-events: none; }
+#plan-svg .plan-box-rect.hover { stroke: #4a90d9; }
+#plan-svg .plan-box-rect.selected { stroke: #4a90d9; stroke-width: 2; }
 #plan-svg .plan-wall { stroke: #a7adb6; pointer-events: none; }
 #plan-svg .plan-wall.hover { stroke: #8fa9c9; }
 #plan-svg .plan-wall.selected { stroke: #4a90d9; }

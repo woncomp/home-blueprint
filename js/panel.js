@@ -159,6 +159,36 @@ export class Panel {
       p.style.marginTop = '6px';
       p.textContent = '修改长度保持墙的方向与起点不变；拖动墙身平移，拖动端点/交点调整形状。';
       wrap.appendChild(p);
+    } else if (selection.kind === 'door' && this.mode === 'plan') {
+      // 户型编辑：门宽可编辑，开门方向可翻面；不显示电路相关操作
+      const door = (data.doors || []).find(d => d.id === selection.id);
+      if (!door) return;
+      const title = document.createElement('div');
+      title.className = 'entity-title';
+      title.textContent = '门';
+      wrap.appendChild(title);
+      const wInput = document.createElement('input');
+      wInput.type = 'number';
+      wInput.step = '0.1';
+      wInput.min = '0.4';
+      wInput.value = door.width;
+      wInput.addEventListener('change', () => {
+        this.emit('doorWidth', { id: door.id, width: parseFloat(wInput.value) });
+      });
+      addRow('宽度 (m)', wInput);
+      const flipBtn = document.createElement('button');
+      flipBtn.className = 'tool-btn';
+      flipBtn.textContent = '⇄ 开门方向翻面';
+      flipBtn.addEventListener('click', () => this.emit('doorFlip', door.id));
+      addRow('开门方向', flipBtn);
+      const wall = data.walls.find(w => w.id === door.wall);
+      addRow('所在墙', wall ? `墙 ${wall.id}` : '-');
+      addRow('门高 (m)', String(door.height ?? 2.0));
+      const p = document.createElement('p');
+      p.className = 'placeholder';
+      p.style.marginTop = '6px';
+      p.textContent = '顶视图中拖动门沿墙移动，靠近其他墙可换墙；Delete 删除。';
+      wrap.appendChild(p);
     } else if (selection.kind === 'wire') {
       const wire = data.wires.find(w => w.id === selection.id);
       if (!wire) return;

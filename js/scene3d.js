@@ -122,6 +122,7 @@ export class Scene3D {
 
     this.buildRooms();
     this.buildWalls();
+    this.buildDoors();
     this.buildBreakerBox();
     this.buildWires();
     this.buildNodes();
@@ -168,17 +169,87 @@ export class Scene3D {
       const h = wall.height || 2.8;
       const fp = footprints.get(wall.id);
       if (!fp || fp.length < 3) continue;
-      const shape = new THREE.Shape();
-      fp.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z)));
-      shape.closePath();
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
-      geo.rotateX(Math.PI / 2); // Shape 在 XY 平面，转到 XZ；拉伸方向变为 -Y
-      geo.translate(0, h, 0);   // 抬起为 y ∈ [0, h]
+      const doors = (this.data.doors || []).filter(d => d.wall === wall.id);
       const mat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, transparent: true, opacity: 0.88 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.userData = { kind: 'wall', id: wall.id };
-      this.staticGroup.add(mesh);
-      this._pickables.push(mesh);
+      if (!doors.length) {
+        const mesh = new THREE.Mesh(extrudeFootprint(fp, h), mat);
+        mesh.userData = { kind: 'wall', id: wall.id };
+        this.staticGroup.add(mesh);
+        this._pickables.push(mesh);
+        continue;
+      }
+      // 有门：下段（0 → 门高）带门洞 holes，上段为完整门楣（门高 → 墙高）
+      const dh = Math.min(...doors.map(d => d.height || 2.0), h);
+      const shape = footprintShape(fp);
+      for (const door of doors) {
+        const hole = doorHoleRect(wall, door, fp);
+        if (hole.length >= 3 && Math.abs(signedArea2(hole)) > 1e-6) {
+          shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, z))));
+        }
+      }
+      const lower = new THREE.ExtrudeGeometry(shape, { depth: dh, bevelEnabled: false });
+      lower.rotateX(Math.PI / 2);
+      lower.translate(0, dh, 0);
+      const meshL = new THREE.Mesh(lower, mat);
+      meshL.userData = { kind: 'wall', id: wall.id };
+      this.staticGroup.add(meshL);
+      this._pickables.push(meshL);
+      const upper = extrudeFootprint(fp, h - dh);
+      upper.translate(0, dh, 0);
+      const meshU = new THREE.Mesh(upper, mat.clone());
+      meshU.userData = { kind: 'wall', id: wall.id };
+      this.staticGroup.add(meshU);
+      this._pickables.push(meshU);
+    }
+  }
+
+  // ---------- 门（门框 + 半开门扇，不参与拾取） ----------
+  buildDoors() {
+    const walls = this.wallsById();
+    const frameMat = new THREE.MeshLambertMaterial({ color: 0x8a6f4d });
+    const leafMat = new THREE.MeshLambertMaterial({ color: 0xc9a877 });
+    for (const door of (this.data.doors || [])) {
+      const wall = walls.get(door.wall);
+      if (!wall) continue;
+      const L = wallLen(wall);
+      if (L < 1e-9) continue;
+      const w = Math.min(door.width, L);
+      const dh = Math.min(door.height || 2.0, wall.height || 2.8);
+      const t = (wall.thickness || 0.2) + 0.04;
+      const [dx, dz] = wallDir(wall);
+      const at = u => [wall.start[0] + dx * u, wall.start[1] + dz * u];
+      const yaw = -Math.atan2(dz, dx); // 局部 +x 沿墙方向时的 rotation.y
+
+      // 门框：两侧门梃 + 顶部横梁
+      for (const u of [door.pos - w / 2, door.pos + w / 2]) {
+        const [px, pz] = at(u);
+        const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.05, dh, t), frameMat);
+        jamb.position.set(px, dh / 2, pz);
+        jamb.rotation.y = yaw;
+        jamb.userData.noPick = true;
+        this.staticGroup.add(jamb);
+      }
+      const [cx, cz] = at(door.pos);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(w, 0.06, t), frameMat);
+      head.position.set(cx, dh - 0.03, cz);
+      head.rotation.y = yaw;
+      head.userData.noPick = true;
+      this.staticGroup.add(head);
+
+      // 门扇：铰链在门洞起始侧，朝 face 侧开约 75°
+      const [hx, hz] = at(door.pos - w / 2);
+      const lw = Math.max(w - 0.06, 0.05), lh = Math.max(dh - 0.06, 0.1);
+      const geo = new THREE.BoxGeometry(lw, lh, 0.035);
+      geo.translate(lw / 2, 0, 0); // 铰链边移到原点
+      const leaf = new THREE.Mesh(geo, leafMat);
+      const nrm = wallNormal(wall, door.face || 0);
+      const ang = 1.3; // 75°
+      const tx = dx * Math.cos(ang) + nrm[0] * Math.sin(ang);
+      const tz = dz * Math.cos(ang) + nrm[1] * Math.sin(ang);
+      leaf.rotation.y = -Math.atan2(tz, tx);
+      leaf.position.set(hx, lh / 2 + 0.02, hz);
+      leaf.userData.noPick = true;
+      this.staticGroup.add(leaf);
     }
   }
 
@@ -520,6 +591,65 @@ function computeWallFootprints(walls) {
     result.set(cur.w.id, pts);
   }
   return result;
+}
+
+// ---------- 门洞几何辅助 ----------
+
+// footprint（俯视轮廓，CCW）→ THREE.Shape
+function footprintShape(fp) {
+  const shape = new THREE.Shape();
+  fp.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z)));
+  shape.closePath();
+  return shape;
+}
+
+// footprint 拉伸为 y ∈ [0, depth] 的墙体网格几何
+function extrudeFootprint(fp, depth) {
+  const geo = new THREE.ExtrudeGeometry(footprintShape(fp), { depth, bevelEnabled: false });
+  geo.rotateX(Math.PI / 2); // Shape 在 XY 平面，转到 XZ；拉伸方向变为 -Y
+  geo.translate(0, depth, 0);
+  return geo;
+}
+
+// 门洞矩形（世界坐标，CW 序供 Shape.holes 使用）：中心线 [pos−w/2, pos+w/2] × 厚度方向 ±t/2
+function doorHoleRect(wall, door, fp) {
+  const t = wall.thickness || 0.2;
+  const [dx, dz] = wallDir(wall);
+  const [nx, nz] = [dz, -dx]; // 任一法向，两侧对称
+  const u0 = door.pos - door.width / 2, u1 = door.pos + door.width / 2;
+  const pt = (u, v) => [wall.start[0] + dx * u + nx * v, wall.start[1] + dz * u + nz * v];
+  // 先按墙面延伸少许，再与轮廓裁剪，保证门贴墙端时洞口与轮廓闭合
+  const ext = 0.02;
+  const rect = [pt(u0 - ext, -t / 2 - ext), pt(u1 + ext, -t / 2 - ext), pt(u1 + ext, t / 2 + ext), pt(u0 - ext, t / 2 + ext)];
+  return clipPolygon(rect, fp);
+}
+
+// Sutherland–Hodgman：凸裁剪多边形（CCW）裁剪任意多边形
+function clipPolygon(subject, clip) {
+  if (!clip.length) return [];
+  const inside = (p, a, b) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-12;
+  const intersect = (p, q, a, b) => {
+    const d1x = b[0] - a[0], d1z = b[1] - a[1];
+    const d2x = q[0] - p[0], d2z = q[1] - p[1];
+    const den = d1x * d2z - d1z * d2x;
+    if (Math.abs(den) < 1e-12) return q;
+    const t = ((p[0] - a[0]) * d2z - (p[1] - a[1]) * d2x) / den;
+    return [a[0] + d1x * t, a[1] + d1z * t];
+  };
+  let out = subject;
+  for (let i = 0; i < clip.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length];
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const p = input[j], q = input[(j + 1) % input.length];
+      const pin = inside(p, a, b), qin = inside(q, a, b);
+      if (pin) out.push(p);
+      if (pin !== qin) out.push(intersect(p, q, a, b));
+    }
+    if (!out.length) break;
+  }
+  return out;
 }
 
 function clearGroup(g) {

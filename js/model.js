@@ -31,8 +31,25 @@ export function createEmptyData() {
     nodes: [],
     wires: [],
     links: [],
+    doors: [],
     roomNames: {},
     roomNameHints: [],
+  };
+}
+
+// 门：开在墙上的通道。pos 为门中心沿墙距离，width 门洞宽，face 开门方向（0/1）
+export const DOOR_MIN_WIDTH = 0.4;
+export const DOOR_DEFAULT_WIDTH = 0.9;
+export const DOOR_DEFAULT_HEIGHT = 2.0;
+
+export function createDoor(wallId, pos, width, face) {
+  return {
+    id: genId('d'),
+    wall: wallId,
+    pos,
+    width: width || DOOR_DEFAULT_WIDTH,
+    face: face || 0,
+    height: DOOR_DEFAULT_HEIGHT,
   };
 }
 
@@ -86,6 +103,7 @@ export function findBreakerBox(data) {
 // 强电箱是有且仅有一个、默认存在的特殊设备：有墙就必须有箱体，
 // 缺失时补建到第一堵墙中点，所在墙失效时重新挂靠
 export function normalizeData(data) {
+  if (data && !Array.isArray(data.doors)) data.doors = []; // 旧数据没有门字段
   if (data && data.breakerBox) {
     const box = data.breakerBox;
     data.nodes = data.nodes || [];
@@ -397,5 +415,14 @@ export function validateData(data) {
   // 强电箱是特殊设备节点，最多一个；尚未放置（空户型）是允许的
   const boxes = data.nodes.filter(n => n.deviceType === 'breakerBox');
   if (boxes.length > 1) return '强电箱最多一个';
+  // doors 为可选字段（旧数据没有）：存在时须为数组且 wall 引用有效
+  if (data.doors != null) {
+    if (!Array.isArray(data.doors)) return 'doors 必须是数组';
+    const wallIds = new Set(data.walls.map(w => w.id));
+    for (const d of data.doors) {
+      if (!d || typeof d !== 'object' || !wallIds.has(d.wall)) return '门引用了不存在的墙';
+      if (!(d.width > 0) || !(d.pos >= 0)) return '门的宽度/位置无效';
+    }
+  }
   return null;
 }

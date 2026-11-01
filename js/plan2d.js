@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, wallLen, wallDir, findBreakerBox } from './model.js';
+import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -33,15 +33,16 @@ function projOnSeg(p, a, b) {
 function round1(v) { return Math.round(v * 10) / 10; }
 
 export class Plan2D {
-  // opts: { svg, tools: {select, ortho, free, del, fit}, hintEl,
-  //         dataProvider, onChange, onSelect, onNotify, onDeleteWall, onWallAdded }
+  // opts: { svg, tools: {select, ortho, free, door, del, fit}, hintEl,
+  //         dataProvider, onChange, onSelect, onNotify, onDeleteWall, onDeleteDoor, onWallAdded }
   constructor(opts) {
     Object.assign(this, opts);
     this.active = false;
     this.tool = 'select';
     this.view = { scale: 80, ox: 0, oy: 0 };
     this.selectedId = null;
-    this.hover = null;        // { type: 'wall'|'handle', key }
+    this.selectedKind = null; // 'wall' | 'door' | 'node'（强电箱）
+    this.hover = null;        // { type: 'wall'|'handle'|'box'|'door', key|id }
     this.drawP1 = null;       // 画墙起点
     this.previewP2 = null;    // 画墙预览终点
     this.drag = null;         // 进行中的拖动
@@ -179,8 +180,20 @@ export class Plan2D {
     if (box && byId.get(box.wall)) {
       const wall = byId.get(box.wall);
       const [dx, dz] = wallDir(wall);
-      const [sx, sy] = this.toScreen([wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos]);
-      el('rect', { x: sx - 4, y: sy - 4, width: 8, height: 8, class: 'plan-box' }, gMark);
+      const t2 = wall.thickness || 0.2;
+      // 小矩形示意：0.26m 长 × 墙厚+边距 宽
+      const hl = 0.13, off = t2 / 2 + 0.04;
+      const [nx, nz] = [dz, -dx];
+      const c = [wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos];
+      const pts = [
+        [c[0] - dx * hl + nx * off, c[1] - dz * hl + nz * off],
+        [c[0] + dx * hl + nx * off, c[1] + dz * hl + nz * off],
+        [c[0] + dx * hl - nx * off, c[1] + dz * hl - nz * off],
+        [c[0] - dx * hl - nx * off, c[1] - dz * hl - nz * off],
+      ].map(p => this.toScreen(p).map(v => v.toFixed(1)).join(',')).join(' ');
+      const isSel = this.selectedKind === 'node' && box.id === this.selectedId;
+      const isHov = this.hover && this.hover.type === 'box';
+      el('polygon', { points: pts, class: 'plan-box-rect' + (isSel ? ' selected' : isHov ? ' hover' : '') }, gMark);
     }
 
     // 墙体
@@ -198,6 +211,30 @@ export class Plan2D {
         'stroke-width': Math.max((w.thickness || 0.2) * v.scale, 3),
         'stroke-linecap': 'butt',
       }, gWalls);
+    }
+
+    // 门：墙上矩形示意（门洞宽 × 墙厚+边距），选中/悬停高亮
+    const gDoors = el('g', {}, svg);
+    for (const door of (this.data().doors || [])) {
+      const wall = byId.get(door.wall);
+      if (!wall) continue;
+      const L = wallLen(wall);
+      if (L < 1e-9) continue;
+      const [dx, dz] = wallDir(wall);
+      const t2 = wall.thickness || 0.2;
+      const hw = door.width / 2;
+      const off = t2 / 2 + 0.05;
+      const [nx, nz] = [dz, -dx];
+      const c = [wall.start[0] + dx * door.pos, wall.start[1] + dz * door.pos];
+      const pts = [
+        [c[0] - dx * hw + nx * off, c[1] - dz * hw + nz * off],
+        [c[0] + dx * hw + nx * off, c[1] + dz * hw + nz * off],
+        [c[0] + dx * hw - nx * off, c[1] + dz * hw - nz * off],
+        [c[0] - dx * hw - nx * off, c[1] - dz * hw - nz * off],
+      ].map(p => this.toScreen(p).map(v => v.toFixed(1)).join(',')).join(' ');
+      const isSel = this.selectedKind === 'door' && door.id === this.selectedId;
+      const isHov = this.hover && this.hover.type === 'door' && this.hover.id === door.id;
+      el('polygon', { points: pts, class: 'plan-door-rect' + (isSel ? ' selected' : isHov ? ' hover' : '') }, gDoors);
     }
 
     // 选中墙的长度标注
@@ -269,7 +306,8 @@ export class Plan2D {
     this.tool = tool;
     this.drawP1 = null; this.previewP2 = null;
     for (const [name, btn] of Object.entries({
-      select: this.tools.select, ortho: this.tools.ortho, free: this.tools.free, delete: this.tools.del,
+      select: this.tools.select, ortho: this.tools.ortho, free: this.tools.free,
+      door: this.tools.door, delete: this.tools.del,
     })) {
       btn.classList.toggle('active-tool', name === tool);
     }
@@ -280,9 +318,10 @@ export class Plan2D {
 
   updateHint() {
     const hints = {
-      select: '单击墙或控制点选中；拖动墙身沿法线平移，拖动端点/交点调整形状；Delete 删除选中墙',
+      select: '单击墙、门或控制点选中；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
       ortho: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '正交画墙：点击起点（自动锁定水平/竖直，Alt 关闭吸附）',
       free: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '任意画墙：点击起点（可任意角度，Alt 关闭吸附）',
+      door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；可连续添加，Esc 退出',
       delete: '单击要删除的墙（强电箱所在墙不可删除）',
     };
     this.hintEl.textContent = hints[this.tool] || '';
@@ -290,21 +329,30 @@ export class Plan2D {
 
   updateCursor() {
     let c = 'default';
-    if (this.tool === 'ortho' || this.tool === 'free') c = 'crosshair';
+    if (this.tool === 'ortho' || this.tool === 'free' || this.tool === 'door') c = 'crosshair';
     else if (this.tool === 'delete') c = 'not-allowed';
     else if (this.drag && this.drag.type === 'pan') c = 'grabbing';
-    else if (this.hover) c = this.hover.type === 'handle' ? 'pointer' : 'move';
+    else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door') ? 'pointer' : 'move';
     this.svg.style.cursor = c;
   }
 
   setSelection(sel) {
-    this.selectedId = sel && sel.kind === 'wall' ? sel.id : null;
+    this.selectedKind = sel ? sel.kind : null;
+    this.selectedId = sel ? sel.id : null;
     if (this.active) this.render();
   }
 
   selectWall(id) {
+    this.selectedKind = id ? 'wall' : null;
     this.selectedId = id;
     this.onSelect(id ? { kind: 'wall', id } : null);
+    this.render();
+  }
+
+  selectDoor(id) {
+    this.selectedKind = 'door';
+    this.selectedId = id;
+    this.onSelect({ kind: 'door', id });
     this.render();
   }
 
@@ -377,6 +425,34 @@ export class Plan2D {
     return best;
   }
 
+  // 强电箱标记拾取（屏幕距离）
+  pickBox(sx, sy) {
+    const box = findBreakerBox(this.data());
+    if (!box) return null;
+    const wall = this.data().walls.find(w => w.id === box.wall);
+    if (!wall) return null;
+    const [dx, dz] = wallDir(wall);
+    const [bx, by] = this.toScreen([wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos]);
+    return Math.hypot(bx - sx, by - sy) <= 10 ? box : null;
+  }
+
+  // 门拾取：光标距门所在墙较近且沿墙坐标落在门洞范围内
+  pickDoor(w) {
+    const byId = new Map(this.data().walls.map(x => [x.id, x]));
+    let best = null, bestOff = Infinity;
+    for (const door of (this.data().doors || [])) {
+      const wall = byId.get(door.wall);
+      if (!wall) continue;
+      const pr = projOnSeg(w, wall.start, wall.end);
+      if (!pr) continue;
+      const tol = Math.max((wall.thickness || 0.2) / 2, WALL_PICK_PX / this.view.scale);
+      if (pr.d > tol) continue;
+      const off = Math.abs(pr.dist - door.pos);
+      if (off <= door.width / 2 + tol && off < bestOff) { bestOff = off; best = door; }
+    }
+    return best;
+  }
+
   // ---------- 快照 / 校验 ----------
   takeSnapshot() {
     const snap = new Map();
@@ -417,6 +493,14 @@ export class Plan2D {
         return '修改会使节点或设备落在墙外';
       }
     }
+    // 门边界：门洞须完整留在墙内
+    for (const door of (data.doors || [])) {
+      if (!affected.has(door.wall)) continue;
+      const wall = byId.get(door.wall);
+      if (wall && (door.pos - door.width / 2 < -1e-9 || door.pos + door.width / 2 > wallLen(wall) + 1e-9)) {
+        return '修改会使门落在墙外';
+      }
+    }
     // T 型连接：拖动前落在某墙内部的端点组，拖动后仍须落在同一墙上
     for (const g of groupsSnap) {
       if (!g.hostId) continue;
@@ -450,7 +534,8 @@ export class Plan2D {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
       if (e.code === 'Escape') this.handleEscape();
       else if ((e.code === 'Delete' || e.code === 'Backspace') && this.selectedId) {
-        this.onDeleteWall(this.selectedId);
+        if (this.selectedKind === 'door') this.onDeleteDoor(this.selectedId);
+        else if (this.selectedKind === 'wall') this.onDeleteWall(this.selectedId);
       }
     });
     window.addEventListener('resize', () => { if (this.active) this.resize(); });
@@ -472,6 +557,24 @@ export class Plan2D {
         };
         return;
       }
+      const box = this.pickBox(sx, sy);
+      if (box) {
+        this.selectedKind = 'node'; this.selectedId = box.id;
+        this.onSelect({ kind: 'node', id: box.id });
+        this.drag = { type: 'box', origPos: box.pos, invalid: null, cursor: [sx, sy], dimText: null };
+        this.render();
+        return;
+      }
+      const door = this.pickDoor(w);
+      if (door) {
+        this.selectDoor(door.id);
+        this.drag = {
+          type: 'door', doorId: door.id,
+          orig: { wall: door.wall, pos: door.pos },
+          invalid: null, cursor: [sx, sy], dimText: null,
+        };
+        return;
+      }
       const wall = this.pickWall(w);
       if (wall) {
         this.selectWall(wall.id);
@@ -486,6 +589,23 @@ export class Plan2D {
       }
       this.drag = { type: 'pan', lastSx: sx, lastSy: sy, moved: false };
       this.updateCursor();
+      return;
+    }
+
+    if (this.tool === 'door') {
+      const wall = this.pickWall(w);
+      if (!wall) return;
+      const pr = projOnSeg(w, wall.start, wall.end);
+      if (!pr) return;
+      let t = Math.max(0, Math.min(wallLen(wall), pr.dist));
+      if (!e.altKey) t = round1(t);
+      const hw = 0.45; // 默认门宽 0.9m 的半宽
+      t = Math.max(hw, Math.min(wallLen(wall) - hw, t));
+      const door = createDoor(wall.id, t);
+      this.data().doors.push(door);
+      this.onChange();
+      this.onNotify('门已添加');
+      this.selectDoor(door.id);
       return;
     }
 
@@ -524,12 +644,17 @@ export class Plan2D {
       const g = this.pickHandle(sx, sy);
       let hover = null;
       if (g) hover = { type: 'handle', key: g.key };
+      else if (this.pickBox(sx, sy)) hover = { type: 'box' };
       else {
-        const wall = this.pickWall(w);
-        if (wall) hover = { type: 'wall', id: wall.id };
+        const door = this.pickDoor(w);
+        if (door) hover = { type: 'door', id: door.id };
+        else {
+          const wall = this.pickWall(w);
+          if (wall) hover = { type: 'wall', id: wall.id };
+        }
       }
-      const key = hover ? `${hover.type}:${hover.key || hover.id}` : null;
-      const oldKey = this.hover ? `${this.hover.type}:${this.hover.key || this.hover.id}` : null;
+      const key = hover ? `${hover.type}:${hover.key || hover.id || ''}` : null;
+      const oldKey = this.hover ? `${this.hover.type}:${this.hover.key || this.hover.id || ''}` : null;
       if (key !== oldKey) {
         this.hover = hover;
         this.updateCursor();
@@ -551,6 +676,51 @@ export class Plan2D {
         this.updateCursor();
         this.render();
       }
+      return;
+    }
+
+    if (d.type === 'box') {
+      // 强电箱沿墙拖动（与 3D 编辑一致的最小边距 0.3m）
+      const box = findBreakerBox(this.data());
+      const wall = box && this.data().walls.find(x => x.id === box.wall);
+      if (!box || !wall) return;
+      const pr = projOnSeg(w, wall.start, wall.end);
+      if (!pr) return;
+      let t = pr.dist;
+      if (!e.altKey) t = round1(t);
+      t = Math.max(0.3, Math.min(wallLen(wall) - 0.3, t));
+      box.pos = t;
+      d.dimText = `位置 ${t.toFixed(2)} m`;
+      this.updateCursor();
+      this.render();
+      return;
+    }
+
+    if (d.type === 'door') {
+      // 门拖动：默认沿本墙滑动；靠近其他墙（吸附半径内）时换墙
+      const door = (this.data().doors || []).find(x => x.id === d.doorId);
+      if (!door) return;
+      const byId = new Map(this.data().walls.map(x => [x.id, x]));
+      const curWall = byId.get(door.wall);
+      if (!curWall) return;
+      let target = curWall;
+      const R = SNAP_PX / this.view.scale;
+      let host = null, hostD = Infinity;
+      for (const wall of this.data().walls) {
+        const pr = projOnSeg(w, wall.start, wall.end);
+        if (pr && pr.d < hostD) { host = wall; hostD = pr.d; }
+      }
+      if (host && host.id !== curWall.id && hostD <= R) target = host;
+      const pr = projOnSeg(w, target.start, target.end);
+      if (!pr) return;
+      let t = pr.dist;
+      if (!e.altKey) t = round1(t);
+      t = Math.max(door.width / 2, Math.min(wallLen(target) - door.width / 2, t));
+      door.wall = target.id;
+      door.pos = t;
+      d.dimText = (target.id !== d.orig.wall ? '已换墙 · ' : '') + `位置 ${t.toFixed(2)} m`;
+      this.updateCursor();
+      this.render();
       return;
     }
 
@@ -634,14 +804,31 @@ export class Plan2D {
       this.render();
       return;
     }
-    const changed = this.snapChanged(d.snapshot);
+    let changed = false;
+    if (d.snapshot) changed = this.snapChanged(d.snapshot);
+    else if (d.type === 'box') {
+      const box = findBreakerBox(this.data());
+      changed = !!box && box.pos !== d.origPos;
+    } else if (d.type === 'door') {
+      const door = (this.data().doors || []).find(x => x.id === d.doorId);
+      changed = !!door && (door.pos !== d.orig.pos || door.wall !== d.orig.wall);
+    }
     this.updateCursor();
     this.render();
     if (changed) this.onChange();
   }
 
   cancelDrag() {
-    if (this.drag && this.drag.snapshot) this.restoreSnap(this.drag.snapshot);
+    const d = this.drag;
+    if (!d) return;
+    if (d.snapshot) this.restoreSnap(d.snapshot);
+    if (d.type === 'box') {
+      const box = findBreakerBox(this.data());
+      if (box) box.pos = d.origPos;
+    } else if (d.type === 'door') {
+      const door = (this.data().doors || []).find(x => x.id === d.doorId);
+      if (door) { door.wall = d.orig.wall; door.pos = d.orig.pos; }
+    }
     this.drag = null;
   }
 
@@ -703,5 +890,32 @@ export class Plan2D {
     this.onChange();
     this.render();
     return true;
+  }
+
+  // ---------- 门面板操作：精确宽度（校验墙内边界）与开门方向翻面 ----------
+  setDoorWidth(id, w) {
+    const door = (this.data().doors || []).find(d => d.id === id);
+    if (!door) return false;
+    if (!(w >= DOOR_MIN_WIDTH)) {
+      this.onNotify(`门宽无效（需 ≥ ${DOOR_MIN_WIDTH}m）`, true);
+      return false;
+    }
+    const wall = this.data().walls.find(x => x.id === door.wall);
+    if (wall && (door.pos - w / 2 < -1e-9 || door.pos + w / 2 > wallLen(wall) + 1e-9)) {
+      this.onNotify('门宽超出所在墙的范围，已保留原宽度', true);
+      return false;
+    }
+    door.width = w;
+    this.onChange();
+    this.render();
+    return true;
+  }
+
+  flipDoor(id) {
+    const door = (this.data().doors || []).find(d => d.id === id);
+    if (!door) return;
+    door.face = door.face === 0 ? 1 : 0;
+    this.onChange();
+    this.render();
   }
 }

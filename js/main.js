@@ -32,6 +32,7 @@ const plan2d = new Plan2D({
     select: document.getElementById('plan-tool-select'),
     ortho: document.getElementById('plan-tool-ortho'),
     free: document.getElementById('plan-tool-free'),
+    door: document.getElementById('plan-tool-door'),
     del: document.getElementById('plan-tool-delete'),
     fit: document.getElementById('plan-fit'),
   },
@@ -41,6 +42,7 @@ const plan2d = new Plan2D({
   onSelect: sel => { app.selection = sel; scene3d.setSelection(sel); refreshPanel(); refreshToolbar(); },
   onNotify: toast,
   onDeleteWall: deleteWallById,
+  onDeleteDoor: deleteDoorById,
   onWallAdded: wall => {
     // 首堵墙创建后自动在墙中点建立强电箱（特殊设备节点）
     if (!findBreakerBox(app.data)) {
@@ -90,7 +92,7 @@ function setMode(mode) {
       planSvg.classList.add('hidden');
       canvas.classList.remove('hidden');
       scene3d.controls.enabled = true;
-      if (app.selection && app.selection.kind === 'wall') app.selection = null;
+      if (app.selection && ['wall', 'door'].includes(app.selection.kind)) app.selection = null;
       scene3d.setSelection(app.selection);
       scene3d.updateData(app.data);
       scene3d.resize();
@@ -122,6 +124,7 @@ document.getElementById('btn-plan-mode').addEventListener('click', () => setMode
 document.getElementById('plan-tool-select').addEventListener('click', () => plan2d.setTool('select'));
 document.getElementById('plan-tool-ortho').addEventListener('click', () => plan2d.setTool('ortho'));
 document.getElementById('plan-tool-free').addEventListener('click', () => plan2d.setTool('free'));
+document.getElementById('plan-tool-door').addEventListener('click', () => plan2d.setTool('door'));
 document.getElementById('plan-tool-delete').addEventListener('click', () => plan2d.setTool('delete'));
 document.getElementById('plan-fit').addEventListener('click', () => plan2d.fitView());
 document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
@@ -157,6 +160,8 @@ document.getElementById('file-input').addEventListener('change', async e => {
 panel.on('edited', () => refresh());
 panel.on('highlightCircuit', idx => scene3d.setHighlight(idx));
 panel.on('wallLength', ({ id, len }) => plan2d.setWallLength(id, len));
+panel.on('doorWidth', ({ id, width }) => plan2d.setDoorWidth(id, width));
+panel.on('doorFlip', id => { plan2d.flipDoor(id); refreshPanel(); });
 panel.on('addBreaker', () => {
   const box = findBreakerBox(app.data);
   if (!box) return;
@@ -197,7 +202,7 @@ function deleteSelectedEntity() {
   }
 }
 
-// 删除墙：级联清理墙上的节点、相关电线与连通；强电箱所在墙禁止删除
+// 删除墙：级联清理墙上的节点、门、相关电线与连通；强电箱所在墙禁止删除
 function deleteWallById(id) {
   const box = findBreakerBox(app.data);
   if (box && box.wall === id) { toast('强电箱所在的墙不能删除', true); return; }
@@ -205,6 +210,7 @@ function deleteWallById(id) {
   app.data.nodes = app.data.nodes.filter(n => !nodeIds.has(n.id));
   app.data.wires = app.data.wires.filter(w => !nodeIds.has(w.from) && !nodeIds.has(w.to));
   app.data.links = (app.data.links || []).filter(l => !nodeIds.has(l.a) && !nodeIds.has(l.b));
+  app.data.doors = (app.data.doors || []).filter(d => d.wall !== id);
   app.data.walls = app.data.walls.filter(w => w.id !== id);
   if (app.selection && app.selection.kind === 'wall' && app.selection.id === id) {
     app.selection = null;
@@ -213,6 +219,16 @@ function deleteWallById(id) {
   }
   refresh();
   toast('墙已删除');
+}
+
+function deleteDoorById(id) {
+  app.data.doors = (app.data.doors || []).filter(d => d.id !== id);
+  if (app.selection && app.selection.kind === 'door' && app.selection.id === id) {
+    app.selection = null;
+    plan2d.setSelection(null);
+  }
+  refresh();
+  toast('门已删除');
 }
 
 // ---------- 强电箱端子同步 ----------
