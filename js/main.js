@@ -1,23 +1,21 @@
-// 入口：装配各模块、模式切换、3D 交互、编辑操作
+// 入口：装配各模块、查看/电路编辑/户型编辑三模式切换、3D 交互、编辑操作
 import * as THREE from 'three';
 import { Scene3D } from './scene3d.js';
 import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
+import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import {
-  createWall, createBreakerBox, createNode, wallLen, wallDir, genId,
-} from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
+const planSvg = document.getElementById('plan-svg');
 const scene3d = new Scene3D(canvas);
 const dataProvider = () => app.data;
 
 const app = {
   data: null,
-  mode: 'view',
+  mode: null,          // 'view' | 'edit' | 'plan'
   selection: null,
-  addWallPending: false,
-  wallP1: null,
   draggingBox: false,
 };
 
@@ -28,6 +26,28 @@ const wallface = new WallFaceDialog({
   onNotify: toast,
   onClose: () => {},
 });
+const plan2d = new Plan2D({
+  svg: planSvg,
+  tools: {
+    select: document.getElementById('plan-tool-select'),
+    ortho: document.getElementById('plan-tool-ortho'),
+    free: document.getElementById('plan-tool-free'),
+    del: document.getElementById('plan-tool-delete'),
+    fit: document.getElementById('plan-fit'),
+  },
+  hintEl: document.getElementById('plan-hint'),
+  dataProvider,
+  onChange: refresh,
+  onSelect: sel => { app.selection = sel; scene3d.setSelection(sel); refreshPanel(); refreshToolbar(); },
+  onNotify: toast,
+  onDeleteWall: deleteWallById,
+  onWallAdded: wall => {
+    // 首堵墙创建后自动在墙中点建立强电箱
+    if (!app.data.breakerBox) {
+      app.data.breakerBox = createBreakerBox(wall.id, 1, Math.round((wallLen(wall) / 2) * 100) / 100);
+    }
+  },
+});
 
 // ---------- 刷新 ----------
 function refresh() {
@@ -35,35 +55,60 @@ function refresh() {
   scene3d.updateData(app.data);
   refreshPanel();
   refreshToolbar();
+  plan2d.refresh();
 }
 
 function refreshPanel() {
-  panel.update(app.data, scene3d.circuits, app.selection);
+  panel.update(app.data, scene3d.circuits, app.selection, app.mode);
 }
 
 function refreshToolbar() {
-  document.getElementById('btn-add-wall').classList.toggle('active-tool', app.addWallPending);
   const isDeletable = app.selection && ['node', 'wire'].includes(app.selection.kind);
   document.getElementById('btn-delete-entity').disabled = !(app.mode === 'edit' && isDeletable);
-  const hint = document.getElementById('edit-hint');
-  if (app.mode !== 'edit') hint.textContent = '';
-  else if (app.addWallPending) hint.textContent = app.wallP1 ? '点击第二个端点完成画墙（Esc 取消）' : '点击地面放置墙的第一个端点';
-  else hint.textContent = '';
+  document.getElementById('edit-hint').textContent =
+    app.mode === 'edit' ? '点击墙面展开 2D 视图编辑电路；选中强电箱后可沿墙拖动' : '';
 }
 
 // ---------- 模式切换 ----------
 function setMode(mode) {
+  if (app.mode === mode) { refreshToolbar(); refreshPanel(); return; }
+  const prev = app.mode;
   app.mode = mode;
-  app.addWallPending = false;
-  app.wallP1 = null;
-  scene3d.setMode(mode);
+
+  if (mode === 'plan') {
+    // 进入户型编辑：禁用 3D 控制器，切换到 2D 顶视图并自动适应
+    scene3d.controls.enabled = false;
+    app.selection = null;
+    scene3d.setSelection(null);
+    canvas.classList.add('hidden');
+    planSvg.classList.remove('hidden');
+    plan2d.activate();
+  } else {
+    if (prev === 'plan') {
+      // 返回 3D：重建场景并正确 resize；清理户型编辑的选中状态
+      plan2d.deactivate();
+      planSvg.classList.add('hidden');
+      canvas.classList.remove('hidden');
+      scene3d.controls.enabled = true;
+      if (app.selection && app.selection.kind === 'wall') app.selection = null;
+      scene3d.setSelection(app.selection);
+      scene3d.updateData(app.data);
+      scene3d.resize();
+    }
+    scene3d.setMode(mode);
+  }
+
   document.getElementById('btn-view-mode').classList.toggle('active', mode === 'view');
   document.getElementById('btn-edit-mode').classList.toggle('active', mode === 'edit');
+  document.getElementById('btn-plan-mode').classList.toggle('active', mode === 'plan');
   document.getElementById('edit-tools').classList.toggle('hidden', mode !== 'edit');
+  document.getElementById('plan-tools').classList.toggle('hidden', mode !== 'plan');
   document.getElementById('overlay-hint').firstElementChild.textContent =
     mode === 'view'
       ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
-      : 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑';
+      : mode === 'edit'
+        ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑'
+        : '滚轮缩放 · 空白处拖动平移 · 单击选中，拖动墙身/端点编辑 · 按住 Alt 关闭吸附 · Esc 取消';
   if (wallface.isOpen()) wallface.close();
   refreshToolbar();
   refreshPanel();
@@ -71,14 +116,14 @@ function setMode(mode) {
 
 document.getElementById('btn-view-mode').addEventListener('click', () => setMode('view'));
 document.getElementById('btn-edit-mode').addEventListener('click', () => setMode('edit'));
+document.getElementById('btn-plan-mode').addEventListener('click', () => setMode('plan'));
 
 // ---------- 工具栏 ----------
-document.getElementById('btn-add-wall').addEventListener('click', () => {
-  app.addWallPending = !app.addWallPending;
-  app.wallP1 = null;
-  scene3d.setHover(null);
-  refreshToolbar();
-});
+document.getElementById('plan-tool-select').addEventListener('click', () => plan2d.setTool('select'));
+document.getElementById('plan-tool-ortho').addEventListener('click', () => plan2d.setTool('ortho'));
+document.getElementById('plan-tool-free').addEventListener('click', () => plan2d.setTool('free'));
+document.getElementById('plan-tool-delete').addEventListener('click', () => plan2d.setTool('delete'));
+document.getElementById('plan-fit').addEventListener('click', () => plan2d.fitView());
 document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
 document.getElementById('btn-export').addEventListener('click', () => {
   syncTerminals();
@@ -96,25 +141,22 @@ document.getElementById('file-input').addEventListener('change', async e => {
     const data = await importJsonFile(file);
     app.data = data;
     app.selection = null;
+    scene3d.setSelection(null);
+    plan2d.setSelection(null);
     scene3d.setData(data);
+    if (app.mode === 'plan') plan2d.fitView(); // 导入新数据时自动适应一次
     refreshPanel();
+    refreshToolbar();
     toast('导入成功');
   } catch (err) {
     toast('导入失败: ' + err.message, true);
-  }
-});
-window.addEventListener('keydown', e => {
-  if (e.code === 'Escape') {
-    app.addWallPending = false;
-    app.wallP1 = null;
-    clearTempPreview();
-    refreshToolbar();
   }
 });
 
 // ---------- 面板事件 ----------
 panel.on('edited', () => refresh());
 panel.on('highlightCircuit', idx => scene3d.setHighlight(idx));
+panel.on('wallLength', ({ id, len }) => plan2d.setWallLength(id, len));
 panel.on('addBreaker', () => {
   const box = app.data.breakerBox;
   if (!box) return;
@@ -152,6 +194,24 @@ function deleteSelectedEntity() {
     app.selection = null;
     refresh();
   }
+}
+
+// 删除墙：级联清理墙上的节点、相关电线与连通；强电箱所在墙禁止删除
+function deleteWallById(id) {
+  const box = app.data.breakerBox;
+  if (box && box.wall === id) { toast('强电箱所在的墙不能删除', true); return; }
+  const nodeIds = new Set(app.data.nodes.filter(n => n.wall === id).map(n => n.id));
+  app.data.nodes = app.data.nodes.filter(n => !nodeIds.has(n.id));
+  app.data.wires = app.data.wires.filter(w => !nodeIds.has(w.from) && !nodeIds.has(w.to));
+  app.data.links = (app.data.links || []).filter(l => !nodeIds.has(l.a) && !nodeIds.has(l.b));
+  app.data.walls = app.data.walls.filter(w => w.id !== id);
+  if (app.selection && app.selection.kind === 'wall' && app.selection.id === id) {
+    app.selection = null;
+    scene3d.setSelection(null);
+    plan2d.setSelection(null);
+  }
+  refresh();
+  toast('墙已删除');
 }
 
 // ---------- 强电箱端子同步 ----------
@@ -196,9 +256,7 @@ window.addEventListener('mousemove', e => {
     box.pos = Math.round(t * 100) / 100;
     syncTerminals();
     scene3d.updateData(app.data);
-  } else if (app.addWallPending && app.wallP1 && app.mode === 'edit') {
-    drawWallPreview(app.wallP1, e.clientX, e.clientY);
-  } else if (!wallface.isOpen() && e.buttons === 0 && !(app.mode === 'edit' && app.addWallPending)) {
+  } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
     const hit = scene3d.pick(e.clientX, e.clientY);
     scene3d.setHover(hit && ['wall', 'node', 'wire', 'breakerBox'].includes(hit.kind) ? hit : null);
   }
@@ -220,33 +278,7 @@ window.addEventListener('mouseup', e => {
 });
 
 function handleCanvasClick(e) {
-  if (wallface.isOpen()) return;
-  if (app.mode === 'edit' && app.addWallPending) {
-    const p = new THREE.Vector3();
-    if (!scene3d.groundPoint(e.clientX, e.clientY, p)) return;
-    if (!app.wallP1) {
-      app.wallP1 = [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100];
-      refreshToolbar();
-    } else {
-      const p2 = [Math.round(p.x * 100) / 100, Math.round(p.z * 100) / 100];
-      const len = Math.hypot(p2[0] - app.wallP1[0], p2[1] - app.wallP1[1]);
-      if (len < 0.2) { toast('墙太短', true); return; }
-      const wall = createWall(app.wallP1[0], app.wallP1[1], p2[0], p2[1]);
-      app.data.walls.push(wall);
-      // 保证强电箱存在：放到第一面墙的中点
-      if (!app.data.breakerBox) {
-        const box = createBreakerBox(wall.id, 1, Math.round((len / 2) * 100) / 100);
-        app.data.breakerBox = box;
-      }
-      app.wallP1 = null;
-      app.addWallPending = false;
-      clearTempPreview();
-      refresh();
-      toast('墙已添加');
-    }
-    return;
-  }
-
+  if (wallface.isOpen() || app.mode === 'plan') return;
   const hit = scene3d.pick(e.clientX, e.clientY);
   // 点击墙面 → 直接展开该面 2D 视图
   if (hit && hit.kind === 'wall') {
@@ -258,31 +290,6 @@ function handleCanvasClick(e) {
   scene3d.setSelection(hit);
   refreshPanel();
   refreshToolbar();
-}
-
-// ---------- 画墙预览 ----------
-function drawWallPreview(p1, clientX, clientY) {
-  clearTempPreview();
-  const p = new THREE.Vector3();
-  if (!scene3d.groundPoint(clientX, clientY, p)) return;
-  const len = Math.hypot(p.x - p1[0], p.z - p1[1]);
-  if (len < 0.01) return;
-  const geo = new THREE.BoxGeometry(len, 2.8, 0.2);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x4a90d9, transparent: true, opacity: 0.5 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set((p1[0] + p.x) / 2, 1.4, (p1[1] + p.z) / 2);
-  mesh.rotation.y = -Math.atan2(p.z - p1[1], p.x - p1[0]);
-  scene3d.tempGroup.add(mesh);
-}
-
-function clearTempPreview() {
-  const g = scene3d.tempGroup;
-  while (g.children.length) {
-    const c = g.children.pop();
-    if (c.geometry) c.geometry.dispose();
-    if (c.material) c.material.dispose();
-    g.remove(c);
-  }
 }
 
 // ---------- Toast ----------
@@ -302,6 +309,7 @@ function toast(msg, isError = false) {
 // ---------- 启动 ----------
 window.__app = app;       // 调试句柄
 window.__scene = scene3d;
+window.__plan = plan2d;
 
 (async function start() {
   app.data = await loadDefaultData();
@@ -310,7 +318,7 @@ window.__scene = scene3d;
 
   let last = performance.now();
   function loop(now) {
-    scene3d.render((now - last) / 1000);
+    if (app.mode !== 'plan') scene3d.render((now - last) / 1000);
     last = now;
     requestAnimationFrame(loop);
   }

@@ -21,12 +21,20 @@
       <span class="title">家庭强电设计器</span>
       <div class="mode-switch">
         <button id="btn-view-mode" class="mode-btn active">查看模式</button>
-        <button id="btn-edit-mode" class="mode-btn">编辑模式</button>
+        <button id="btn-edit-mode" class="mode-btn">电路编辑</button>
+        <button id="btn-plan-mode" class="mode-btn">户型编辑</button>
       </div>
       <div id="edit-tools" class="hidden">
-        <button id="btn-add-wall" class="tool-btn">＋ 添加墙</button>
         <button id="btn-delete-entity" class="tool-btn danger" disabled>删除选中</button>
         <span id="edit-hint" class="hint"></span>
+      </div>
+      <div id="plan-tools" class="hidden">
+        <button id="plan-tool-select" class="tool-btn active-tool">☝ 选择</button>
+        <button id="plan-tool-ortho" class="tool-btn">📐 正交画墙</button>
+        <button id="plan-tool-free" class="tool-btn">✏ 任意画墙</button>
+        <button id="plan-tool-delete" class="tool-btn danger">✕ 删除墙</button>
+        <button id="plan-fit" class="tool-btn">⛶ 适应视图</button>
+        <span id="plan-hint" class="hint"></span>
       </div>
       <div class="spacer"></div>
       <button id="btn-export" class="tool-btn">导出 JSON</button>
@@ -35,6 +43,7 @@
     </div>
     <div id="canvas-container">
       <canvas id="scene-canvas"></canvas>
+      <svg id="plan-svg" class="hidden"></svg>
       <div id="overlay-hint">
         <span>WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击选中</span>
       </div>

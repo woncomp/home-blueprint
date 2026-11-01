@@ -1,5 +1,5 @@
 // 右侧信息栏：强电箱 2D 布局 + 选中实体信息/属性编辑
-import { DEVICE_TYPES, NODE_TYPE_NAMES, wiresAt } from './model.js';
+import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen } from './model.js';
 
 export class Panel {
   constructor(dataProvider) {
@@ -7,6 +7,7 @@ export class Panel {
     this.dataProvider = dataProvider;
     this.cbs = {};
     this.highlightedBreaker = null;
+    this.mode = 'view';
     this.breakerListEl = document.getElementById('breaker-list');
     this.entityInfoEl = document.getElementById('entity-info');
   }
@@ -14,7 +15,8 @@ export class Panel {
   on(event, cb) { this.cbs[event] = cb; }
   emit(event, arg) { if (this.cbs[event]) this.cbs[event](arg); }
 
-  update(data, circuits, selection) {
+  update(data, circuits, selection, mode) {
+    this.mode = mode || 'view';
     this.renderBreakerBox(data, circuits);
     this.renderEntity(data, circuits, selection);
   }
@@ -91,7 +93,9 @@ export class Panel {
   renderEntity(data, circuits, selection) {
     this.entityInfoEl.innerHTML = '';
     if (!selection) {
-      this.entityInfoEl.innerHTML = '<p class="placeholder">点击 3D 场景中的电线、设备或端点查看详情</p>';
+      this.entityInfoEl.innerHTML = this.mode === 'plan'
+        ? '<p class="placeholder">在顶视图中点击墙或控制点查看详情</p>'
+        : '<p class="placeholder">点击 3D 场景中的电线、设备或端点查看详情</p>';
       return;
     }
     const wrap = document.createElement('div');
@@ -131,7 +135,31 @@ export class Panel {
       return chip;
     };
 
-    if (selection.kind === 'wire') {
+    if (selection.kind === 'wall' && this.mode === 'plan') {
+      // 户型编辑：墙长可精确编辑，高度/厚度只读；不显示电路相关操作
+      const wall = data.walls.find(w => w.id === selection.id);
+      if (!wall) return;
+      const title = document.createElement('div');
+      title.className = 'entity-title';
+      title.textContent = '墙体';
+      wrap.appendChild(title);
+      const lenInput = document.createElement('input');
+      lenInput.type = 'number';
+      lenInput.step = '0.1';
+      lenInput.min = '0.2';
+      lenInput.value = wallLen(wall).toFixed(2);
+      lenInput.addEventListener('change', () => {
+        this.emit('wallLength', { id: wall.id, len: parseFloat(lenInput.value) });
+      });
+      addRow('长度 (m)', lenInput);
+      addRow('高度 (m)', String(wall.height ?? 2.8));
+      addRow('厚度 (m)', String(wall.thickness ?? 0.2));
+      const p = document.createElement('p');
+      p.className = 'placeholder';
+      p.style.marginTop = '6px';
+      p.textContent = '修改长度保持墙的方向与起点不变；拖动墙身平移，拖动端点/交点调整形状。';
+      wrap.appendChild(p);
+    } else if (selection.kind === 'wire') {
       const wire = data.wires.find(w => w.id === selection.id);
       if (!wire) return;
       const nodes = new Map(data.nodes.map(n => [n.id, n]));

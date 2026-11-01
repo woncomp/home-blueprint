@@ -33,9 +33,8 @@ export class Scene3D {
     this.wireGroup = new THREE.Group();    // 电线
     this.nodeGroup = new THREE.Group();    // 设备/端点
     this.labelGroup = new THREE.Group();
-    this.tempGroup = new THREE.Group();    // 编辑预览
     this.hoverGroup = new THREE.Group();   // 悬停墙面预览
-    this.scene.add(this.staticGroup, this.wireGroup, this.nodeGroup, this.labelGroup, this.tempGroup, this.hoverGroup);
+    this.scene.add(this.staticGroup, this.wireGroup, this.nodeGroup, this.labelGroup, this.hoverGroup);
 
     this.data = null;
     this.rooms = [];
@@ -183,26 +182,30 @@ export class Scene3D {
     }
   }
 
-  // 墙面单面高亮薄片
-  makeFaceOverlay(wall, face, color, opacity) {
+  // 墙面单面预览：只画边缘矩形框
+  makeFaceOutline(wall, face, color) {
     const len = wallLen(wall);
     const h = wall.height || 2.8;
     const t = wall.thickness || 0.2;
-    const geo = new THREE.PlaneGeometry(len + t, h);
-    const mat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
+    const hw = (len + t) / 2, hh = h / 2;
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-hw, -hh, 0),
+      new THREE.Vector3(hw, -hh, 0),
+      new THREE.Vector3(hw, hh, 0),
+      new THREE.Vector3(-hw, hh, 0),
+    ]);
+    const mat = new THREE.LineBasicMaterial({ color });
+    const frame = new THREE.LineLoop(geo, mat);
     const [dx, dz] = wallDir(wall);
     const [nx, nz] = wallNormal(wall, face);
-    mesh.position.set(
+    frame.position.set(
       wall.start[0] + dx * len / 2 + nx * (t / 2 + 0.005),
       h / 2,
       wall.start[1] + dz * len / 2 + nz * (t / 2 + 0.005),
     );
-    mesh.rotation.y = Math.atan2(nx, nz);
-    mesh.userData.noPick = true;
-    return mesh;
+    frame.rotation.y = Math.atan2(nx, nz);
+    frame.userData.noPick = true;
+    return frame;
   }
 
   // 悬停轻微高亮，提示对象可点击；墙面显示单面预览（点击展开 2D）
@@ -214,7 +217,7 @@ export class Scene3D {
     if (!hit) return;
     if (hit.kind === 'wall') {
       const wall = this.wallsById().get(hit.id);
-      if (wall) this.hoverGroup.add(this.makeFaceOverlay(wall, hit.face, 0x8fc3ee, 0.22));
+      if (wall) this.hoverGroup.add(this.makeFaceOutline(wall, hit.face, 0x8fc3ee));
       return;
     }
     for (const g of [this.nodeGroup, this.wireGroup, this.staticGroup]) {
