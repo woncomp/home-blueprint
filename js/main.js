@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -42,9 +42,9 @@ const plan2d = new Plan2D({
   onNotify: toast,
   onDeleteWall: deleteWallById,
   onWallAdded: wall => {
-    // 首堵墙创建后自动在墙中点建立强电箱
-    if (!app.data.breakerBox) {
-      app.data.breakerBox = createBreakerBox(wall.id, 1, Math.round((wallLen(wall) / 2) * 100) / 100);
+    // 首堵墙创建后自动在墙中点建立强电箱（特殊设备节点）
+    if (!findBreakerBox(app.data)) {
+      app.data.nodes.push(createBreakerBox(wall.id, 1, Math.round((wallLen(wall) / 2) * 100) / 100));
     }
   },
 });
@@ -105,7 +105,7 @@ function setMode(mode) {
   document.getElementById('plan-tools').classList.toggle('hidden', mode !== 'plan');
   document.getElementById('overlay-hint').firstElementChild.textContent =
     mode === 'view'
-      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
+      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击有电路的墙面展开 2D'
       : mode === 'edit'
         ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑'
         : '滚轮缩放 · 空白处拖动平移 · 单击选中，拖动墙身/端点编辑 · 按住 Alt 关闭吸附 · Esc 取消';
@@ -158,7 +158,7 @@ panel.on('edited', () => refresh());
 panel.on('highlightCircuit', idx => scene3d.setHighlight(idx));
 panel.on('wallLength', ({ id, len }) => plan2d.setWallLength(id, len));
 panel.on('addBreaker', () => {
-  const box = app.data.breakerBox;
+  const box = findBreakerBox(app.data);
   if (!box) return;
   const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
   node.label = '强电箱端子';
@@ -178,6 +178,7 @@ function deleteNodeById(id) {
   const node = app.data.nodes.find(n => n.id === id);
   if (!node) return;
   if (node.type === 'terminal') { toast('强电箱端子不能单独删除，请删除所属断路器', true); return; }
+  if (node.deviceType === 'breakerBox') { toast('强电箱不能删除', true); return; }
   app.data.nodes = app.data.nodes.filter(n => n.id !== id);
   app.data.wires = app.data.wires.filter(w => w.from !== id && w.to !== id);
   app.data.links = (app.data.links || []).filter(l => l.a !== id && l.b !== id);
@@ -198,7 +199,7 @@ function deleteSelectedEntity() {
 
 // 删除墙：级联清理墙上的节点、相关电线与连通；强电箱所在墙禁止删除
 function deleteWallById(id) {
-  const box = app.data.breakerBox;
+  const box = findBreakerBox(app.data);
   if (box && box.wall === id) { toast('强电箱所在的墙不能删除', true); return; }
   const nodeIds = new Set(app.data.nodes.filter(n => n.wall === id).map(n => n.id));
   app.data.nodes = app.data.nodes.filter(n => !nodeIds.has(n.id));
@@ -216,7 +217,7 @@ function deleteWallById(id) {
 
 // ---------- 强电箱端子同步 ----------
 function syncTerminals() {
-  const box = app.data.breakerBox;
+  const box = findBreakerBox(app.data);
   if (!box) return;
   for (const br of box.breakers) {
     const node = app.data.nodes.find(n => n.id === br.terminal);
@@ -232,18 +233,31 @@ function syncTerminals() {
 // ---------- 3D 画布交互 ----------
 let mouseDownPos = null;
 
+// 查看模式下：没有任何电路的墙不可展开 2D、也没有 hover 预览；
+// 强电箱是特殊设备，所在墙始终可查看
+function wallPickableInView(hit) {
+  if (app.mode !== 'view' || hit.kind !== 'wall') return true;
+  if (scene3d.circuits.wallsWithCircuit.has(hit.id)) return true;
+  const box = findBreakerBox(app.data);
+  return !!box && box.wall === hit.id;
+}
+
 canvas.addEventListener('mousedown', e => {
   mouseDownPos = { x: e.clientX, y: e.clientY };
-  // 强电箱拖动
-  if (app.mode === 'edit' && app.selection && app.selection.kind === 'breakerBox') {
-    const hit = scene3d.pick(e.clientX, e.clientY);
-    if (hit && hit.kind === 'breakerBox') app.draggingBox = true;
+  // 强电箱拖动（特殊设备节点）
+  if (app.mode === 'edit' && app.selection && app.selection.kind === 'node') {
+    const selNode = app.data.nodes.find(n => n.id === app.selection.id);
+    if (selNode && selNode.deviceType === 'breakerBox') {
+      const hit = scene3d.pick(e.clientX, e.clientY);
+      if (hit && hit.kind === 'node' && hit.id === selNode.id) app.draggingBox = true;
+    }
   }
 });
 
 window.addEventListener('mousemove', e => {
   if (app.draggingBox) {
-    const box = app.data.breakerBox;
+    const box = findBreakerBox(app.data);
+    if (!box) return;
     const wall = app.data.walls.find(w => w.id === box.wall);
     if (!wall) return;
     const p = new THREE.Vector3();
@@ -258,7 +272,7 @@ window.addEventListener('mousemove', e => {
     scene3d.updateData(app.data);
   } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
     const hit = scene3d.pick(e.clientX, e.clientY);
-    scene3d.setHover(hit && ['wall', 'node', 'wire', 'breakerBox'].includes(hit.kind) ? hit : null);
+    scene3d.setHover(hit && wallPickableInView(hit) && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
   }
 });
 
@@ -279,7 +293,8 @@ window.addEventListener('mouseup', e => {
 
 function handleCanvasClick(e) {
   if (wallface.isOpen() || app.mode === 'plan') return;
-  const hit = scene3d.pick(e.clientX, e.clientY);
+  const rawHit = scene3d.pick(e.clientX, e.clientY);
+  const hit = rawHit && wallPickableInView(rawHit) ? rawHit : null;
   // 点击墙面 → 直接展开该面 2D 视图
   if (hit && hit.kind === 'wall') {
     scene3d.setHover(null);

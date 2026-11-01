@@ -2,7 +2,7 @@
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, createNode, createWire,
   addLink, removeLink, linksOf, computeCircuits,
-  DEVICE_TYPES, NODE_TYPE_NAMES, CIRCUIT_COLORS,
+  DEVICE_TYPES, NODE_TYPE_NAMES, CIRCUIT_COLORS, findBreakerBox,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -152,7 +152,7 @@ export class WallFaceDialog {
   }
 
   renderBreakerBox() {
-    const box = this.data.breakerBox;
+    const box = findBreakerBox(this.data);
     if (!box || box.wall !== this.wallId || box.face !== this.face) return;
     const bw = 0.55 * this.view.scale, bh = 0.75 * this.view.scale;
     const bx = this.posX(box.pos - 0.275), by = this.heightY(box.height + 0.375);
@@ -184,6 +184,15 @@ export class WallFaceDialog {
       });
       term.addEventListener('mousedown', e => this.onNodeMouseDown(e, br.terminal));
       g.appendChild(term);
+    });
+    // 选择工具下点击箱体本体 = 选中强电箱设备节点（其他工具保持原有冒泡行为）
+    g.addEventListener('mousedown', e => {
+      if (this.tool !== 'select') return;
+      e.stopPropagation();
+      this.selectedNodeId = box.id;
+      this.selectedWireId = null;
+      this.render();
+      if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: box.id });
     });
     this.svg.appendChild(g);
   }
@@ -275,6 +284,7 @@ export class WallFaceDialog {
   renderNodes() {
     for (const node of this.nodesOnFace()) {
       if (node.type === 'terminal') continue;
+      if (node.deviceType === 'breakerBox') continue; // 强电箱由 renderBreakerBox 单独绘制
       const x = this.posX(node.pos), y = this.heightY(node.height);
       const isSel = this.selectedNodeId === node.id;
       const cIdx = this.circuits.nodeCircuit.get(node.id);
@@ -445,6 +455,10 @@ export class WallFaceDialog {
   deleteNode(nodeId) {
     const node = this.data.nodes.find(n => n.id === nodeId);
     if (!node || node.type === 'terminal') return;
+    if (node.deviceType === 'breakerBox') {
+      if (this.cbs.onNotify) this.cbs.onNotify('强电箱不能删除');
+      return;
+    }
     this.data.nodes = this.data.nodes.filter(n => n.id !== nodeId);
     this.data.wires = this.data.wires.filter(w => w.from !== nodeId && w.to !== nodeId);
     if (this.data.links) {

@@ -9,6 +9,12 @@
     { "id": "w6", "start": [4, 0], "end": [4, 3.5], "height": 2.8, "thickness": 0.2 }
   ],
   "nodes": [
+    { "id": "bb1", "type": "device", "deviceType": "breakerBox", "wall": "w4", "face": 1, "pos": 2.5, "height": 1.6, "label": "强电箱",
+      "breakers": [
+        { "id": "b1", "label": "客厅插座", "terminal": "t1" },
+        { "id": "b2", "label": "卧室插座", "terminal": "t2" },
+        { "id": "b3", "label": "照明回路", "terminal": "t3" }
+      ] },
     { "id": "t1", "type": "terminal", "wall": "w4", "face": 1, "pos": 2.5, "height": 1.6, "label": "客厅插座端子" },
     { "id": "t2", "type": "terminal", "wall": "w4", "face": 1, "pos": 2.5, "height": 1.6, "label": "卧室插座端子" },
     { "id": "t3", "type": "terminal", "wall": "w4", "face": 1, "pos": 2.5, "height": 1.6, "label": "照明端子" },
@@ -60,18 +66,6 @@
     { "id": "l4", "a": "k4a", "b": "k4b" },
     { "id": "l5", "a": "k5a", "b": "k5b" }
   ],
-  "breakerBox": {
-    "id": "bb1",
-    "wall": "w4",
-    "face": 1,
-    "pos": 2.5,
-    "height": 1.6,
-    "breakers": [
-      { "id": "b1", "label": "客厅插座", "terminal": "t1" },
-      { "id": "b2", "label": "卧室插座", "terminal": "t2" },
-      { "id": "b3", "label": "照明回路", "terminal": "t3" }
-    ]
-  },
   "roomNames": {},
   "roomNameHints": ["客厅", "卧室A", "卧室B"]
 }

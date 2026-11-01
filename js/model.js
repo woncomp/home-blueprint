@@ -10,6 +10,7 @@ export const DEVICE_TYPES = {
   socket: { name: '插座', color: '#c04040', shape: 'socket' },
   switch: { name: '开关', color: '#4060c0', shape: 'switch' },
   light: { name: '灯具', color: '#e0a020', shape: 'light' },
+  breakerBox: { name: '强电箱', color: '#3a4048', shape: 'breakerBox' },
 };
 
 export const NODE_TYPE_NAMES = {
@@ -30,7 +31,6 @@ export function createEmptyData() {
     nodes: [],
     wires: [],
     links: [],
-    breakerBox: null,
     roomNames: {},
     roomNameHints: [],
   };
@@ -63,15 +63,57 @@ export function createWire(from, to) {
   return { id: genId('e'), from, to, label: '' };
 }
 
+// 强电箱是一种特殊设备：作为设备节点存放在 nodes 中，断路器挂在节点上
 export function createBreakerBox(wallId, face, pos) {
   return {
     id: genId('bb'),
+    type: 'device',
+    deviceType: 'breakerBox',
     wall: wallId,
     face,
     pos,
     height: 1.6,
+    label: '强电箱',
     breakers: [], // { id, label, terminal: 节点id（箱内端子） }
   };
+}
+
+export function findBreakerBox(data) {
+  return (data.nodes || []).find(n => n.type === 'device' && n.deviceType === 'breakerBox') || null;
+}
+
+// 旧版数据把强电箱存为顶层 breakerBox 对象，迁移为设备节点；
+// 强电箱是有且仅有一个、默认存在的特殊设备：有墙就必须有箱体，
+// 缺失时补建到第一堵墙中点，所在墙失效时重新挂靠
+export function normalizeData(data) {
+  if (data && data.breakerBox) {
+    const box = data.breakerBox;
+    data.nodes = data.nodes || [];
+    data.nodes.push({
+      id: box.id || genId('bb'),
+      type: 'device',
+      deviceType: 'breakerBox',
+      wall: box.wall,
+      face: box.face,
+      pos: box.pos,
+      height: box.height != null ? box.height : 1.6,
+      label: box.label || '强电箱',
+      breakers: box.breakers || [],
+    });
+    delete data.breakerBox;
+  }
+  if (data && Array.isArray(data.walls) && Array.isArray(data.nodes) && data.walls.length) {
+    const first = data.walls[0];
+    const box = findBreakerBox(data);
+    if (!box) {
+      data.nodes.push(createBreakerBox(first.id, 1, Math.round((wallLen(first) / 2) * 100) / 100));
+    } else if (!data.walls.some(w => w.id === box.wall)) {
+      box.wall = first.id;
+      box.face = 1;
+      box.pos = Math.round((wallLen(first) / 2) * 100) / 100;
+    }
+  }
+  return data;
 }
 
 export function addLink(data, a, b) {
@@ -280,10 +322,11 @@ export function pointInRoom(x, z, room) {
 
 // ---------- 线路计算 ----------
 
-// 返回 { circuits: [{ breakerId, label, color, wireIds:Set, nodeIds:Set }], wireCircuit: Map<wireId, idx>, nodeCircuit: Map<nodeId, idx> }
+// 返回 { circuits: [{ breakerId, label, color, wireIds:Set, nodeIds:Set, wallIds:Set }], wireCircuit: Map<wireId, idx>, nodeCircuit: Map<nodeId, idx>, wallsWithCircuit: Set<wallId> }
 // 线路 = 从断路器终端节点出发，沿电线 + links（穿墙/转角连通）遍历到的连通分量
 export function computeCircuits(data) {
   const parent = new Map();
+  const nodesById = new Map(data.nodes.map(n => [n.id, n]));
   const find = x => {
     while (parent.get(x) !== x) {
       parent.set(x, parent.get(parent.get(x)));
@@ -308,11 +351,12 @@ export function computeCircuits(data) {
   const circuits = [];
   const wireCircuit = new Map();
   const nodeCircuit = new Map();
-  const box = data.breakerBox;
+  const wallsWithCircuit = new Set();
+  const box = findBreakerBox(data);
   if (box) {
     box.breakers.forEach((br, i) => {
       const color = CIRCUIT_COLORS[i % CIRCUIT_COLORS.length];
-      const circuit = { breakerId: br.id, label: br.label, color, wireIds: new Set(), nodeIds: new Set() };
+      const circuit = { breakerId: br.id, label: br.label, color, wireIds: new Set(), nodeIds: new Set(), wallIds: new Set() };
       const terminal = br.terminal ? 'n:' + br.terminal : null;
       if (terminal && parent.has(terminal)) {
         const root = find(terminal);
@@ -324,12 +368,19 @@ export function computeCircuits(data) {
             wireCircuit.set(w.id, i);
           }
         }
-        for (const nid of circuit.nodeIds) nodeCircuit.set(nid, i);
+        for (const nid of circuit.nodeIds) {
+          nodeCircuit.set(nid, i);
+          const node = nodesById.get(nid);
+          if (node) {
+            circuit.wallIds.add(node.wall);
+            wallsWithCircuit.add(node.wall);
+          }
+        }
       }
       circuits.push(circuit);
     });
   }
-  return { circuits, wireCircuit, nodeCircuit };
+  return { circuits, wireCircuit, nodeCircuit, wallsWithCircuit };
 }
 
 // 从某节点出发找的电线
@@ -343,6 +394,8 @@ export function validateData(data) {
   if (!Array.isArray(data.walls) || !Array.isArray(data.nodes) || !Array.isArray(data.wires)) {
     return 'walls/nodes/wires 必须是数组';
   }
-  if (data.breakerBox == null) return '缺少强电箱';
+  // 强电箱是特殊设备节点，最多一个；尚未放置（空户型）是允许的
+  const boxes = data.nodes.filter(n => n.deviceType === 'breakerBox');
+  if (boxes.length > 1) return '强电箱最多一个';
   return null;
 }

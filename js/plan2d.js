@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, wallLen, wallDir } from './model.js';
+import { createWall, wallLen, wallDir, findBreakerBox } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -168,13 +168,14 @@ export class Plan2D {
     const gMark = el('g', {}, svg);
     for (const node of this.data().nodes) {
       if (node.type === 'terminal') continue;
+      if (node.deviceType === 'breakerBox') continue; // 强电箱有专用方块标记
       const wall = byId.get(node.wall);
       if (!wall) continue;
       const [dx, dz] = wallDir(wall);
       const [sx, sy] = this.toScreen([wall.start[0] + dx * node.pos, wall.start[1] + dz * node.pos]);
       el('circle', { cx: sx, cy: sy, r: 2.5, class: 'plan-node' }, gMark);
     }
-    const box = this.data().breakerBox;
+    const box = findBreakerBox(this.data());
     if (box && byId.get(box.wall)) {
       const wall = byId.get(box.wall);
       const [dx, dz] = wallDir(wall);
@@ -400,7 +401,7 @@ export class Plan2D {
     return false;
   }
 
-  // 校验受影响墙：最小长度、节点/强电箱边界、T 型连接保持；返回错误消息或 null
+  // 校验受影响墙：最小长度、节点/设备边界、T 型连接保持；返回错误消息或 null
   validateGeometry(groupsSnap, affected) {
     const data = this.data();
     const byId = new Map(data.walls.map(w => [w.id, w]));
@@ -414,13 +415,6 @@ export class Plan2D {
       const wall = byId.get(node.wall);
       if (wall && (node.pos < -1e-9 || node.pos > wallLen(wall) + 1e-9)) {
         return '修改会使节点或设备落在墙外';
-      }
-    }
-    const box = data.breakerBox;
-    if (box && affected.has(box.wall)) {
-      const wall = byId.get(box.wall);
-      if (wall && (box.pos < -1e-9 || box.pos > wallLen(wall) + 1e-9)) {
-        return '修改会使强电箱落在墙外';
       }
     }
     // T 型连接：拖动前落在某墙内部的端点组，拖动后仍须落在同一墙上

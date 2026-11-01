@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
-  computeCircuits, DEVICE_TYPES, pointInRoom,
+  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox,
 } from './model.js';
 
 const ROOM_COLORS = ['#e8f0e3', '#e3ecf5', '#f5eee3', '#f0e3f5', '#e3f5f0', '#f5e3e8'];
@@ -38,7 +38,7 @@ export class Scene3D {
 
     this.data = null;
     this.rooms = [];
-    this.circuits = { circuits: [], wireCircuit: new Map(), nodeCircuit: new Map() };
+    this.circuits = { circuits: [], wireCircuit: new Map(), nodeCircuit: new Map(), wallsWithCircuit: new Set() };
     this.selected = null;        // { kind, id }
     this.highlightCircuit = null; // 线路索引或 null
     this.mode = 'view';
@@ -241,23 +241,23 @@ export class Scene3D {
     this._hovered = [];
   }
 
-  // ---------- 强电箱 ----------
+  // ---------- 强电箱（特殊设备，拾取身份就是设备节点） ----------
   buildBreakerBox() {
-    const box = this.data.breakerBox;
+    const box = findBreakerBox(this.data);
     if (!box) return;
     const walls = this.wallsById();
     const wall = walls.get(box.wall);
     if (!wall) return;
     const geo = new THREE.BoxGeometry(0.5, 0.7, 0.14);
-    const mat = new THREE.MeshLambertMaterial({ color: 0x3a4048 });
+    const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(DEVICE_TYPES.breakerBox.color) });
     const mesh = new THREE.Mesh(geo, mat);
     const pos = nodeWorldPos({ wall: box.wall, face: box.face, pos: box.pos, height: box.height }, walls);
     mesh.position.set(pos[0], pos[1], pos[2]);
     const [nx, nz] = wallNormal(wall, box.face);
     mesh.rotation.y = -Math.atan2(nz, nx) + Math.PI / 2;
-    const isSel = this.selected && this.selected.kind === 'breakerBox';
-    if (isSel) mat.color.set(0x6fa8dc);
-    mesh.userData = { kind: 'breakerBox', id: box.id };
+    const isSel = this.selected && this.selected.kind === 'node' && this.selected.id === box.id;
+    if (isSel) mat.color.set(0xffee55);
+    mesh.userData = { kind: 'node', id: box.id };
     this.staticGroup.add(mesh);
     this._pickables.push(mesh);
   }
@@ -320,6 +320,7 @@ export class Scene3D {
     const walls = this.wallsById();
     for (const node of this.data.nodes) {
       if (node.type === 'terminal') continue; // 端子在强电箱内部
+      if (node.deviceType === 'breakerBox') continue; // 强电箱由 buildBreakerBox 单独渲染
       const pos = nodeWorldPos(node, walls);
       if (!pos) continue;
       const isSel = this.selected && this.selected.kind === 'node' && this.selected.id === node.id;

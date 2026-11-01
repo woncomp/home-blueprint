@@ -1,11 +1,11 @@
 // 数据加载 / 导出 / 导入
-import { validateData, createEmptyData } from './model.js';
+import { validateData, createEmptyData, normalizeData } from './model.js';
 
 export async function loadDefaultData() {
   try {
     const res = await fetch('data/default.json');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = normalizeData(await res.json());
     const err = validateData(data);
     if (err) throw new Error(err);
     return data;
@@ -31,7 +31,7 @@ export function importJsonFile(file) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
+        const data = normalizeData(JSON.parse(reader.result));
         const err = validateData(data);
         if (err) reject(new Error(err));
         else resolve(data);

@@ -1,5 +1,5 @@
 // 右侧信息栏：强电箱 2D 布局 + 选中实体信息/属性编辑
-import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen } from './model.js';
+import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, findBreakerBox } from './model.js';
 
 export class Panel {
   constructor(dataProvider) {
@@ -23,7 +23,7 @@ export class Panel {
 
   // ---------- 强电箱 2D 布局 ----------
   renderBreakerBox(data, circuits) {
-    const box = data.breakerBox;
+    const box = findBreakerBox(data);
     this.breakerListEl.innerHTML = '';
     if (!box) {
       this.breakerListEl.innerHTML = '<p class="placeholder">尚未放置强电箱</p>';
@@ -201,15 +201,26 @@ export class Panel {
       });
       addRow('离地高度 (m)', hInput);
       if (node.type === 'device') {
-        const sel = document.createElement('select');
-        for (const [k, v] of Object.entries(DEVICE_TYPES)) {
-          const op = document.createElement('option');
-          op.value = k; op.textContent = v.name;
-          if (node.deviceType === k) op.selected = true;
-          sel.appendChild(op);
+        if (node.deviceType === 'breakerBox') {
+          // 强电箱是特殊设备：类型固定，显示断路器信息
+          addRow('断路器数量', String((node.breakers || []).length));
+          const p = document.createElement('p');
+          p.className = 'placeholder';
+          p.style.marginTop = '6px';
+          p.textContent = '在上方强电箱面板中管理断路器；编辑模式下可沿墙水平拖动箱体。';
+          wrap.appendChild(p);
+        } else {
+          const sel = document.createElement('select');
+          for (const [k, v] of Object.entries(DEVICE_TYPES)) {
+            if (k === 'breakerBox') continue; // 强电箱不能由普通设备转换而来
+            const op = document.createElement('option');
+            op.value = k; op.textContent = v.name;
+            if (node.deviceType === k) op.selected = true;
+            sel.appendChild(op);
+          }
+          sel.addEventListener('change', () => { node.deviceType = sel.value; this.emit('edited'); });
+          addRow('设备类型', sel);
         }
-        sel.addEventListener('change', () => { node.deviceType = sel.value; this.emit('edited'); });
-        addRow('设备类型', sel);
       }
       addLabelEditor(node, 'label', '说明');
       const links = (data.links || []).filter(l => l.a === node.id || l.b === node.id);
@@ -220,17 +231,6 @@ export class Panel {
       del.textContent = '删除节点';
       del.addEventListener('click', () => this.emit('deleteNode', node.id));
       wrap.appendChild(del);
-    } else if (selection.kind === 'breakerBox') {
-      const title = document.createElement('div');
-      title.className = 'entity-title';
-      title.textContent = '强电箱';
-      wrap.appendChild(title);
-      addRow('断路器数量', String(data.breakerBox.breakers.length));
-      const p = document.createElement('p');
-      p.className = 'placeholder';
-      p.style.marginTop = '6px';
-      p.textContent = '在上方强电箱面板中管理断路器；编辑模式下可沿墙水平拖动箱体。';
-      wrap.appendChild(p);
     } else if (selection.kind === 'room') {
       const title = document.createElement('div');
       title.className = 'entity-title';
