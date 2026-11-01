@@ -43,9 +43,7 @@ function refreshPanel() {
 
 function refreshToolbar() {
   document.getElementById('btn-add-wall').classList.toggle('active-tool', app.addWallPending);
-  const isWall = app.selection && app.selection.kind === 'wall';
   const isDeletable = app.selection && ['node', 'wire'].includes(app.selection.kind);
-  document.getElementById('btn-delete-wall').disabled = !(app.mode === 'edit' && isWall);
   document.getElementById('btn-delete-entity').disabled = !(app.mode === 'edit' && isDeletable);
   const hint = document.getElementById('edit-hint');
   if (app.mode !== 'edit') hint.textContent = '';
@@ -64,8 +62,8 @@ function setMode(mode) {
   document.getElementById('edit-tools').classList.toggle('hidden', mode !== 'edit');
   document.getElementById('overlay-hint').firstElementChild.textContent =
     mode === 'view'
-      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击选中 · 双击墙面展开'
-      : 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击选中 · 双击墙面展开编辑';
+      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
+      : 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑';
   if (wallface.isOpen()) wallface.close();
   refreshToolbar();
   refreshPanel();
@@ -78,9 +76,9 @@ document.getElementById('btn-edit-mode').addEventListener('click', () => setMode
 document.getElementById('btn-add-wall').addEventListener('click', () => {
   app.addWallPending = !app.addWallPending;
   app.wallP1 = null;
+  scene3d.setHover(null);
   refreshToolbar();
 });
-document.getElementById('btn-delete-wall').addEventListener('click', deleteSelectedWall);
 document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
 document.getElementById('btn-export').addEventListener('click', () => {
   syncTerminals();
@@ -132,9 +130,6 @@ panel.on('deleteWire', id => {
   refresh();
 });
 panel.on('deleteNode', id => deleteNodeById(id));
-panel.on('openWallFace', ({ wallId, face }) => {
-  wallface.open(app.data, wallId, face, app.mode);
-});
 
 // ---------- 删除操作 ----------
 function deleteNodeById(id) {
@@ -145,24 +140,6 @@ function deleteNodeById(id) {
   app.data.wires = app.data.wires.filter(w => w.from !== id && w.to !== id);
   app.data.links = (app.data.links || []).filter(l => l.a !== id && l.b !== id);
   if (app.selection && app.selection.kind === 'node' && app.selection.id === id) app.selection = null;
-  refresh();
-}
-
-function deleteSelectedWall() {
-  const sel = app.selection;
-  if (!sel || sel.kind !== 'wall') return;
-  const box = app.data.breakerBox;
-  if (box && box.wall === sel.id) {
-    toast('该墙承载强电箱，不能删除', true);
-    return;
-  }
-  app.data.walls = app.data.walls.filter(w => w.id !== sel.id);
-  app.data.nodes = app.data.nodes.filter(n => n.wall !== sel.id);
-  // 清理引用被删节点的电线与连通
-  const nodeIds = new Set(app.data.nodes.map(n => n.id));
-  app.data.wires = app.data.wires.filter(w => nodeIds.has(w.from) && nodeIds.has(w.to));
-  app.data.links = (app.data.links || []).filter(l => nodeIds.has(l.a) && nodeIds.has(l.b));
-  app.selection = null;
   refresh();
 }
 
@@ -194,7 +171,6 @@ function syncTerminals() {
 
 // ---------- 3D 画布交互 ----------
 let mouseDownPos = null;
-let lastClick = { time: 0, key: null };
 
 canvas.addEventListener('mousedown', e => {
   mouseDownPos = { x: e.clientX, y: e.clientY };
@@ -222,13 +198,13 @@ window.addEventListener('mousemove', e => {
     scene3d.updateData(app.data);
   } else if (app.addWallPending && app.wallP1 && app.mode === 'edit') {
     drawWallPreview(app.wallP1, e.clientX, e.clientY);
-  } else if (app.mode === 'view' && !wallface.isOpen() && e.buttons === 0) {
+  } else if (!wallface.isOpen() && e.buttons === 0 && !(app.mode === 'edit' && app.addWallPending)) {
     const hit = scene3d.pick(e.clientX, e.clientY);
-    scene3d.setFaceHover(hit && hit.kind === 'wall' ? hit : null);
+    scene3d.setHover(hit && ['wall', 'node', 'wire', 'breakerBox'].includes(hit.kind) ? hit : null);
   }
 });
 
-canvas.addEventListener('mouseleave', () => scene3d.setFaceHover(null));
+canvas.addEventListener('mouseleave', () => scene3d.setHover(null));
 
 window.addEventListener('mouseup', e => {
   if (app.draggingBox) {
@@ -272,24 +248,16 @@ function handleCanvasClick(e) {
   }
 
   const hit = scene3d.pick(e.clientX, e.clientY);
+  // 点击墙面 → 直接展开该面 2D 视图
+  if (hit && hit.kind === 'wall') {
+    scene3d.setHover(null);
+    wallface.open(app.data, hit.id, hit.face, app.mode);
+    return;
+  }
   app.selection = hit;
   scene3d.setSelection(hit);
   refreshPanel();
   refreshToolbar();
-
-  // 双击墙 → 展开 2D 对话框
-  if (hit && hit.kind === 'wall') {
-    const key = hit.id + ':' + hit.face;
-    const now = Date.now();
-    if (lastClick.key === key && now - lastClick.time < 450) {
-      wallface.open(app.data, hit.id, hit.face, app.mode);
-      lastClick.time = 0;
-      return;
-    }
-    lastClick = { time: now, key };
-  } else {
-    lastClick = { time: 0, key: null };
-  }
 }
 
 // ---------- 画墙预览 ----------

@@ -1,5 +1,5 @@
 // 右侧信息栏：强电箱 2D 布局 + 选中实体信息/属性编辑
-import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, wiresAt } from './model.js';
+import { DEVICE_TYPES, NODE_TYPE_NAMES, wiresAt } from './model.js';
 
 export class Panel {
   constructor(dataProvider) {
@@ -192,24 +192,6 @@ export class Panel {
       del.textContent = '删除节点';
       del.addEventListener('click', () => this.emit('deleteNode', node.id));
       wrap.appendChild(del);
-    } else if (selection.kind === 'wall') {
-      const wall = data.walls.find(w => w.id === selection.id);
-      if (!wall) return;
-      const title = document.createElement('div');
-      title.className = 'entity-title';
-      title.textContent = `墙 ${wall.id}`;
-      wrap.appendChild(title);
-      addRow('长度', `${wallLen(wall).toFixed(2)} m`);
-      addRow('高度', `${wall.height || 2.8} m`);
-      addRow('选中面', selection.face === 0 ? 'A 面' : 'B 面');
-      const nodeCount = data.nodes.filter(n => n.wall === wall.id && n.face === selection.face).length;
-      addRow('该面节点', `${nodeCount} 个`);
-      const openBtn = document.createElement('button');
-      openBtn.className = 'tool-btn';
-      openBtn.style.marginTop = '8px';
-      openBtn.textContent = '展开该面 2D 视图';
-      openBtn.addEventListener('click', () => this.emit('openWallFace', { wallId: wall.id, face: selection.face }));
-      wrap.appendChild(openBtn);
     } else if (selection.kind === 'breakerBox') {
       const title = document.createElement('div');
       title.className = 'entity-title';

@@ -115,6 +115,7 @@ export class Scene3D {
     clearGroup(this.labelGroup);
     clearGroup(this.hoverGroup);
     this._hoverKey = null;
+    this._hovered = [];
     this._pickables = [];
 
     this.rooms = detectRooms(this.data.walls);
@@ -176,15 +177,9 @@ export class Scene3D {
       geo.translate(0, h, 0);   // 抬起为 y ∈ [0, h]
       const mat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, transparent: true, opacity: 0.88 });
       const mesh = new THREE.Mesh(geo, mat);
-      const isSel = this.selected && this.selected.kind === 'wall' && this.selected.id === wall.id;
-      // 编辑模式高亮整面墙（用于删除）；查看模式只高亮选中的那一面
-      if (isSel && this.mode === 'edit') mat.color.set(0x6fa8dc);
       mesh.userData = { kind: 'wall', id: wall.id };
       this.staticGroup.add(mesh);
       this._pickables.push(mesh);
-      if (isSel && this.mode !== 'edit' && this.selected.face != null) {
-        this.staticGroup.add(this.makeFaceOverlay(wall, this.selected.face, 0x6fa8dc, 0.5));
-      }
     }
   }
 
@@ -210,15 +205,37 @@ export class Scene3D {
     return mesh;
   }
 
-  // 悬停墙面轻微预览（仅查看模式）
-  setFaceHover(hit) {
-    const key = hit && hit.kind === 'wall' ? `${hit.id}:${hit.face}` : null;
+  // 悬停轻微高亮，提示对象可点击；墙面显示单面预览（点击展开 2D）
+  setHover(hit) {
+    const key = hit ? `${hit.kind}:${hit.id}:${hit.face ?? ''}` : null;
     if (key === this._hoverKey) return;
     this._hoverKey = key;
-    clearGroup(this.hoverGroup);
+    this.clearHover();
     if (!hit) return;
-    const wall = this.wallsById().get(hit.id);
-    if (wall) this.hoverGroup.add(this.makeFaceOverlay(wall, hit.face, 0x8fc3ee, 0.22));
+    if (hit.kind === 'wall') {
+      const wall = this.wallsById().get(hit.id);
+      if (wall) this.hoverGroup.add(this.makeFaceOverlay(wall, hit.face, 0x8fc3ee, 0.22));
+      return;
+    }
+    for (const g of [this.nodeGroup, this.wireGroup, this.staticGroup]) {
+      for (const mesh of g.children) {
+        const ud = mesh.userData;
+        if (!ud || ud.kind !== hit.kind || ud.id !== hit.id) continue;
+        const mat = mesh.material;
+        this._hovered.push({ mesh, color: mat.color.getHex(), emissive: mat.emissive ? mat.emissive.getHex() : null });
+        if (mat.emissive) mat.emissive.setHex(0x2e3c50);
+        else mat.color.multiplyScalar(1.8);
+      }
+    }
+  }
+
+  clearHover() {
+    clearGroup(this.hoverGroup);
+    for (const h of this._hovered || []) {
+      h.mesh.material.color.setHex(h.color);
+      if (h.emissive != null && h.mesh.material.emissive) h.mesh.material.emissive.setHex(h.emissive);
+    }
+    this._hovered = [];
   }
 
   // ---------- 强电箱 ----------
