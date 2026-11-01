@@ -222,8 +222,13 @@ window.addEventListener('mousemove', e => {
     scene3d.updateData(app.data);
   } else if (app.addWallPending && app.wallP1 && app.mode === 'edit') {
     drawWallPreview(app.wallP1, e.clientX, e.clientY);
+  } else if (app.mode === 'view' && !wallface.isOpen() && e.buttons === 0) {
+    const hit = scene3d.pick(e.clientX, e.clientY);
+    scene3d.setFaceHover(hit && hit.kind === 'wall' ? hit : null);
   }
 });
+
+canvas.addEventListener('mouseleave', () => scene3d.setFaceHover(null));
 
 window.addEventListener('mouseup', e => {
   if (app.draggingBox) {

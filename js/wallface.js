@@ -201,15 +201,26 @@ export class WallFaceDialog {
       const cIdx = this.circuits.wireCircuit.get(wire.id);
       const color = cIdx != null ? this.circuits.circuits[cIdx].color : '#888';
       const sameFace = onFace(a) && onFace(b);
-      const hit = el('line', {
-        x1: px(a), y1: py(a), x2: px(b), y2: py(b),
-        class: 'wire-hit', 'data-wireid': wire.id,
-      });
-      const line = el('line', {
-        x1: px(a), y1: py(a), x2: px(b), y2: py(b),
-        stroke: color, 'stroke-width': this.selectedWireId === wire.id ? 4 : 2.5,
-        'stroke-dasharray': sameFace ? '' : '6 4',
-      });
+      let hit, line;
+      if (sameFace) {
+        // 横平竖直：沿墙水平走线，在中点垂直折角
+        const mx = (px(a) + px(b)) / 2;
+        const pts = `${px(a)},${py(a)} ${mx},${py(a)} ${mx},${py(b)} ${px(b)},${py(b)}`;
+        hit = el('polyline', { points: pts, fill: 'none', class: 'wire-hit', 'data-wireid': wire.id });
+        line = el('polyline', { points: pts, fill: 'none', class: 'wire-line', stroke: color, 'stroke-width': this.selectedWireId === wire.id ? 4 : 2.5 });
+      } else {
+        const x1 = px(a), y1 = py(a), x2 = px(b), y2 = py(b);
+        hit = el('line', {
+          x1, y1, x2, y2,
+          class: 'wire-hit', 'data-wireid': wire.id,
+        });
+        line = el('line', {
+          x1, y1, x2, y2,
+          class: 'wire-line',
+          stroke: color, 'stroke-width': this.selectedWireId === wire.id ? 4 : 2.5,
+          'stroke-dasharray': '6 4',
+        });
+      }
       if (this.mode === 'edit') {
         hit.addEventListener('mousedown', e => {
           e.stopPropagation();

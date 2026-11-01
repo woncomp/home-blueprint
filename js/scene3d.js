@@ -34,7 +34,8 @@ export class Scene3D {
     this.nodeGroup = new THREE.Group();    // 设备/端点
     this.labelGroup = new THREE.Group();
     this.tempGroup = new THREE.Group();    // 编辑预览
-    this.scene.add(this.staticGroup, this.wireGroup, this.nodeGroup, this.labelGroup, this.tempGroup);
+    this.hoverGroup = new THREE.Group();   // 悬停墙面预览
+    this.scene.add(this.staticGroup, this.wireGroup, this.nodeGroup, this.labelGroup, this.tempGroup, this.hoverGroup);
 
     this.data = null;
     this.rooms = [];
@@ -112,6 +113,8 @@ export class Scene3D {
     clearGroup(this.wireGroup);
     clearGroup(this.nodeGroup);
     clearGroup(this.labelGroup);
+    clearGroup(this.hoverGroup);
+    this._hoverKey = null;
     this._pickables = [];
 
     this.rooms = detectRooms(this.data.walls);
@@ -152,7 +155,7 @@ export class Scene3D {
       let cx = 0, cz = 0;
       for (const [x, z] of room.points) { cx += x; cz += z; }
       cx /= room.points.length; cz /= room.points.length;
-      const label = makeTextSprite(names[room.key] || `房间${i + 1}`, '#ffffff', 'rgba(40,45,55,0.75)');
+      const label = makeTextSprite(names[room.key] || `房间${i + 1}`, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
       label.position.set(cx, 1.6, cz);
       this.labelGroup.add(label);
     });
@@ -172,11 +175,48 @@ export class Scene3D {
       mesh.position.set(mx, h / 2, mz);
       mesh.rotation.y = -Math.atan2(wall.end[1] - wall.start[1], wall.end[0] - wall.start[0]);
       const isSel = this.selected && this.selected.kind === 'wall' && this.selected.id === wall.id;
-      if (isSel) mat.color.set(0x6fa8dc);
+      // 编辑模式高亮整面墙（用于删除）；查看模式只高亮选中的那一面
+      if (isSel && this.mode === 'edit') mat.color.set(0x6fa8dc);
       mesh.userData = { kind: 'wall', id: wall.id };
       this.staticGroup.add(mesh);
       this._pickables.push(mesh);
+      if (isSel && this.mode !== 'edit' && this.selected.face != null) {
+        this.staticGroup.add(this.makeFaceOverlay(wall, this.selected.face, 0x6fa8dc, 0.5));
+      }
     }
+  }
+
+  // 墙面单面高亮薄片
+  makeFaceOverlay(wall, face, color, opacity) {
+    const len = wallLen(wall);
+    const h = wall.height || 2.8;
+    const t = wall.thickness || 0.2;
+    const geo = new THREE.PlaneGeometry(len + t, h);
+    const mat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const [dx, dz] = wallDir(wall);
+    const [nx, nz] = wallNormal(wall, face);
+    mesh.position.set(
+      wall.start[0] + dx * len / 2 + nx * (t / 2 + 0.005),
+      h / 2,
+      wall.start[1] + dz * len / 2 + nz * (t / 2 + 0.005),
+    );
+    mesh.rotation.y = Math.atan2(nx, nz);
+    mesh.userData.noPick = true;
+    return mesh;
+  }
+
+  // 悬停墙面轻微预览（仅查看模式）
+  setFaceHover(hit) {
+    const key = hit && hit.kind === 'wall' ? `${hit.id}:${hit.face}` : null;
+    if (key === this._hoverKey) return;
+    this._hoverKey = key;
+    clearGroup(this.hoverGroup);
+    if (!hit) return;
+    const wall = this.wallsById().get(hit.id);
+    if (wall) this.hoverGroup.add(this.makeFaceOverlay(wall, hit.face, 0x8fc3ee, 0.22));
   }
 
   // ---------- 强电箱 ----------
@@ -198,10 +238,6 @@ export class Scene3D {
     mesh.userData = { kind: 'breakerBox', id: box.id };
     this.staticGroup.add(mesh);
     this._pickables.push(mesh);
-
-    const label = makeTextSprite('强电箱', '#fff', 'rgba(30,60,110,0.85)');
-    label.position.set(pos[0], pos[1] + 0.55, pos[2]);
-    this.labelGroup.add(label);
   }
 
   // ---------- 电线 ----------
@@ -225,18 +261,36 @@ export class Scene3D {
       if (this.highlightCircuit != null && cIdx !== this.highlightCircuit) opacity = 0.12;
       if (isSel) color = new THREE.Color(0xffee55);
 
-      const dir = new THREE.Vector3(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
-      const len = dir.length();
-      if (len < 0.001) continue;
-      const geo = new THREE.CylinderGeometry(0.018, 0.018, len, 6);
-      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-      mesh.userData = { kind: 'wire', id: wire.id };
-      this.wireGroup.add(mesh);
-      this._pickables.push(mesh);
+      // 横平竖直：水平走到平面中点 → 垂直折角 → 水平到达
+      const pts = orthoPath(p1, p2);
+      if (pts.length < 2) continue;
+      for (let i = 0; i < pts.length - 1; i++) {
+        this.addWireSegment(pts[i], pts[i + 1], color, opacity, wire.id);
+      }
+      for (let i = 1; i < pts.length - 1; i++) {
+        const geo = new THREE.SphereGeometry(0.018, 8, 8);
+        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity });
+        const joint = new THREE.Mesh(geo, mat);
+        joint.position.set(pts[i][0], pts[i][1], pts[i][2]);
+        joint.userData = { kind: 'wire', id: wire.id };
+        this.wireGroup.add(joint);
+        this._pickables.push(joint);
+      }
     }
+  }
+
+  addWireSegment(a, b, color, opacity, wireId) {
+    const dir = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const len = dir.length();
+    if (len < 0.001) return;
+    const geo = new THREE.CylinderGeometry(0.018, 0.018, len, 6);
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    mesh.userData = { kind: 'wire', id: wireId };
+    this.wireGroup.add(mesh);
+    this._pickables.push(mesh);
   }
 
   // ---------- 节点（设备与端点） ----------
@@ -266,10 +320,14 @@ export class Scene3D {
         this.nodeGroup.add(mesh);
         this._pickables.push(mesh);
         if (node.label) {
-          const label = makeTextSprite(node.label, '#222', 'rgba(255,255,255,0.8)', 128, 28);
-          label.position.set(pos[0] + nx * 0.05, pos[1] + 0.2, pos[2] + nz * 0.05);
-          label.userData.noPick = true;
-          this.labelGroup.add(label);
+          // 说明文字用贴在墙面上的薄贴牌表示，不用悬浮文字
+          const pgeo = new THREE.BoxGeometry(0.14, 0.09, 0.012);
+          const pmat = new THREE.MeshLambertMaterial({ color: 0xf2f4f6, transparent: true, opacity: 0.92 * opacity });
+          const plate = new THREE.Mesh(pgeo, pmat);
+          plate.position.set(pos[0] + nx * 0.012, pos[1] + 0.13, pos[2] + nz * 0.012);
+          plate.rotation.y = Math.atan2(nx, nz);
+          plate.userData.noPick = true;
+          this.labelGroup.add(plate);
         }
       } else {
         // 转弯/分线端点：小圆点
@@ -343,7 +401,7 @@ function clearGroup(g) {
   }
 }
 
-export function makeTextSprite(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w = 256, h = 56) {
+export function makeTextSprite(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w = 256, h = 56, scale = 0.9) {
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
@@ -358,10 +416,26 @@ export function makeTextSprite(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w =
   const tex = new THREE.CanvasTexture(canvas);
   const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
   const sprite = new THREE.Sprite(mat);
-  const scale = 0.9;
   sprite.scale.set(scale * w / h, scale, 1);
   sprite.renderOrder = 10;
   return sprite;
+}
+
+// 两节点间横平竖直的走线路径：水平到平面中点 → 垂直折角 → 水平到达
+function orthoPath(p1, p2) {
+  const mx = (p1[0] + p2[0]) / 2, mz = (p1[2] + p2[2]) / 2;
+  const raw = [
+    [p1[0], p1[1], p1[2]],
+    [mx, p1[1], mz],
+    [mx, p2[1], mz],
+    [p2[0], p2[1], p2[2]],
+  ];
+  const pts = [];
+  for (const p of raw) {
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) > 0.01) pts.push(p);
+  }
+  return pts;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
