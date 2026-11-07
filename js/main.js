@@ -79,6 +79,7 @@ function setMode(mode) {
 
   if (mode === 'plan') {
     // 进入户型编辑：禁用 3D 控制器，切换到 2D 顶视图并自动适应
+    scene3d.controls.cancelPan();
     scene3d.controls.enabled = false;
     app.selection = null;
     scene3d.setSelection(null);
@@ -107,9 +108,9 @@ function setMode(mode) {
   document.getElementById('plan-tools').classList.toggle('hidden', mode !== 'plan');
   document.getElementById('overlay-hint').firstElementChild.textContent =
     mode === 'view'
-      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
+      ? 'WASD 平移视点 · 左键拖动旋转 · 中键拖动平移（松手惯性滑动）· 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
       : mode === 'edit'
-        ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑'
+        ? 'WASD 平移视点 · 左键拖动旋转 · 中键拖动平移（松手惯性滑动）· 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑'
         : '滚轮缩放 · 空白处拖动平移 · 单击选中，拖动墙身/端点编辑 · 按住 Alt 关闭吸附 · Esc 取消';
   if (wallface.isOpen()) wallface.close();
   refreshToolbar();
@@ -257,6 +258,7 @@ function syncTerminals() {
 let mouseDownPos = null;
 
 canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return; // 中键用于平移视点、右键无点击行为，均不进入点击/拖拽判定
   mouseDownPos = { x: e.clientX, y: e.clientY };
   // 强电箱拖动（特殊设备节点）
   if (app.mode === 'edit' && app.selection && app.selection.kind === 'node') {
@@ -298,6 +300,7 @@ window.addEventListener('mouseup', e => {
     refresh();
     return;
   }
+  if (e.button !== 0) return;
   if (!mouseDownPos) return;
   const moved = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
   mouseDownPos = null;
