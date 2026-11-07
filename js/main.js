@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, segHasCircuit, BREAKER_BOX_SIZE } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, wallPickableInView, BREAKER_BOX_SIZE } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -257,15 +257,11 @@ function syncTerminals() {
 // ---------- 3D 画布交互 ----------
 let mouseDownPos = null;
 
-// 查看模式下：没有任何电路的墙不可展开 2D、也没有 hover 预览；
-// 强电箱是特殊设备，所在墙始终可查看；墙被派生拆分时按逻辑墙段判断
-function wallPickableInView(hit) {
+// 查看模式下：没有任何电路且不是强电箱所在墙的墙不可展开 2D、也没有 hover 预览。
+// 拾取资格按原始整墙判断，与命中的是哪个逻辑段无关；展开与高亮仍按命中段进行
+function hitPickable(hit) {
   if (app.mode !== 'view' || hit.kind !== 'wall') return true;
-  if (hit.seg && segHasCircuit(app.data, scene3d.circuits, hit.seg)) return true;
-  if (!hit.seg && scene3d.circuits.wallsWithCircuit.has(hit.id)) return true;
-  const box = findBreakerBox(app.data);
-  if (!box || box.wall !== hit.id) return false;
-  return !hit.seg || (box.pos >= hit.seg.t0 - 1e-9 && box.pos <= hit.seg.t1 + 1e-9);
+  return wallPickableInView(app.data, scene3d.circuits, hit.id);
 }
 
 canvas.addEventListener('mousedown', e => {
@@ -298,7 +294,7 @@ window.addEventListener('mousemove', e => {
     scene3d.updateData(app.data);
   } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
     const hit = scene3d.pick(e.clientX, e.clientY);
-    scene3d.setHover(hit && wallPickableInView(hit) && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
+    scene3d.setHover(hit && hitPickable(hit) && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
   }
 });
 
@@ -320,7 +316,7 @@ window.addEventListener('mouseup', e => {
 function handleCanvasClick(e) {
   if (wallface.isOpen() || app.mode === 'plan') return;
   const rawHit = scene3d.pick(e.clientX, e.clientY);
-  const hit = rawHit && wallPickableInView(rawHit) ? rawHit : null;
+  const hit = rawHit && hitPickable(rawHit) ? rawHit : null;
   // 点击墙面 → 直接展开该面 2D 视图（带逻辑墙段，被拆分的墙按段展开）
   if (hit && hit.kind === 'wall') {
     scene3d.setHover(null);

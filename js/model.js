@@ -652,6 +652,14 @@ export function segHasCircuit(data, circuits, seg) {
       : n.pos >= seg.t0 - 1e-9 && n.pos < seg.t1 - 1e-9));
 }
 
+// 查看模式下墙体是否允许悬停/点击。资格按原始整墙判断：只要墙的任意部分有电路
+// （或强电箱在其上），整墙所有逻辑段都可拾取；hover 线框和 2D 展开仍按命中段进行
+export function wallPickableInView(data, circuits, wallId) {
+  if (circuits.wallsWithCircuit.has(wallId)) return true;
+  const box = findBreakerBox(data);
+  return !!box && box.wall === wallId;
+}
+
 export function pointInRoom(x, z, room) {
   let inside = false;
   const pts = room.points;
