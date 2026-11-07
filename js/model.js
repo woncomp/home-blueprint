@@ -371,9 +371,15 @@ function segIntersect(w1, w2) {
 // 把 detectRooms 的 segRooms（每墙按切点切出的子段 + 两侧房间）合并成逻辑墙段：
 // 相邻且 (left,right) 完全相同的子段合并——段边界恰好是房间归属发生变化的切点；
 // 未被拆分的墙恒为单段 [0,1]。返回 Map<wallId, [{id, wallId, index, t0, t1, left, right}]>
-export function buildWallSegments(segRooms) {
+// walls 用于换算子段米制长度：手绘 T 连接常见出头/欠头，短于墙厚的小尖段属制图误差，
+// 吸收回邻居——T 型只拆宿主墙，stem 墙保持整段；真实出头（≥墙厚）仍照常拆分。
+export function buildWallSegments(segRooms, walls) {
+  const wallById = new Map((walls || []).map(w => [w.id, w]));
   const out = new Map();
   for (const [wallId, subs] of segRooms) {
+    const wall = wallById.get(wallId);
+    const minSeg = wall ? Math.max(wall.thickness || 0.2, 0.05) : Infinity;
+    const len = wall ? wallLen(wall) : 1;
     const merged = [];
     for (const s of subs) {
       const last = merged[merged.length - 1];
@@ -381,6 +387,24 @@ export function buildWallSegments(segRooms) {
         last.t1 = s.t1;
       } else {
         merged.push({ t0: s.t0, t1: s.t1, left: s.left, right: s.right });
+      }
+    }
+    // 吸收微小子段：端部并入唯一邻居，中间并入较长的邻居；只剩一段时不处理。
+    // minSeg 为 Infinity（缺 walls）时整体跳过吸收
+    let changed = true;
+    while (changed && merged.length > 1) {
+      changed = false;
+      for (let i = 0; i < merged.length; i++) {
+        if (!Number.isFinite(minSeg) || (merged[i].t1 - merged[i].t0) * len >= minSeg) continue;
+        let j;
+        if (i === 0) j = 1;
+        else if (i === merged.length - 1) j = merged.length - 2;
+        else j = (merged[i - 1].t1 - merged[i - 1].t0) >= (merged[i + 1].t1 - merged[i + 1].t0) ? i - 1 : i + 1;
+        merged[j].t0 = Math.min(merged[j].t0, merged[i].t0);
+        merged[j].t1 = Math.max(merged[j].t1, merged[i].t1);
+        merged.splice(i, 1);
+        changed = true;
+        break; // 下标已变化，重新扫描（每墙切点数很少）
       }
     }
     out.set(wallId, merged.map((m, i) => ({

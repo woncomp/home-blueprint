@@ -19,7 +19,7 @@ function square() {
 
 function segsOf(walls, wallId) {
   const { segRooms } = detectRooms(walls);
-  return segmentsForWall(buildWallSegments(segRooms), wallId);
+  return segmentsForWall(buildWallSegments(segRooms, walls), wallId);
 }
 
 test('T 型贯通隔墙：宿主墙拆成两段，段边界在切点', () => {
@@ -45,6 +45,34 @@ test('T 型贯通隔墙：宿主墙拆成两段，段边界在切点', () => {
   const w5 = segsOf(walls, 'w5');
   assert.equal(w5.length, 1);
   assert.ok(Math.abs(w5[0].t0 - 0) < 1e-9 && Math.abs(w5[0].t1 - 1) < 1e-9);
+});
+
+test('T 型 stem 两端出头 1cm：小尖段短于墙厚被吸收，stem 保持整段', () => {
+  const walls = [...square(), { id: 'w5', start: [4, -0.01], end: [4, 6.01], height: 2.8, thickness: 0.2 }];
+  const w5 = segsOf(walls, 'w5');
+  assert.equal(w5.length, 1);
+  assert.ok(Math.abs(w5[0].t0 - 0) < 1e-9 && Math.abs(w5[0].t1 - 1) < 1e-9);
+  // 宿主墙仍按房间归属拆分
+  const w1 = segsOf(walls, 'w1');
+  assert.equal(w1.length, 2);
+  assert.ok(Math.abs(w1[0].t1 - 0.5) < 1e-9);
+});
+
+test('T 型 stem 单端出头 1cm：stem 不拆，宿主在切点拆分', () => {
+  const walls = [...square(), { id: 'w5', start: [4, 0], end: [4, 6.01], height: 2.8, thickness: 0.2 }];
+  assert.equal(segsOf(walls, 'w5').length, 1);
+  const w3 = segsOf(walls, 'w3');
+  assert.equal(w3.length, 2);
+  assert.ok(Math.abs(w3[0].t1 - 0.5) < 1e-9);
+});
+
+test('T 型 stem 出头 0.5m（≥墙厚）：真实可见墙段，stem 保持拆分', () => {
+  const walls = [...square(), { id: 'w5', start: [4, -0.5], end: [4, 6], height: 2.8, thickness: 0.2 }];
+  const w5 = segsOf(walls, 'w5');
+  assert.equal(w5.length, 2);
+  // 段边界在越墙切点 0.5 / 6.5
+  assert.ok(Math.abs(w5[0].t1 - 0.5 / 6.5) < 1e-9);
+  assert.ok(Math.abs(w5[1].t0 - 0.5 / 6.5) < 1e-9);
 });
 
 test('死端短墙：两侧房间不变，不拆分', () => {

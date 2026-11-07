@@ -126,7 +126,7 @@ export class Scene3D {
 
     const { rooms, segRooms } = detectRooms(this.data.walls);
     this.rooms = rooms;
-    this.wallSegments = buildWallSegments(segRooms);
+    this.wallSegments = buildWallSegments(segRooms, this.data.walls);
     this.circuits = computeCircuits(this.data);
 
     this.buildRooms();
@@ -463,7 +463,8 @@ export class Scene3D {
       const result = { kind: ud.kind, id: ud.id };
       if (ud.kind === 'wall') {
         // 墙壳是单一 mesh：由命中点反解所在墙与面（顶盖/门楣底面命中同样稳健）
-        const loc = locateWall(this.data.walls, [hit.point.x, hit.point.y, hit.point.z]);
+        const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : null;
+        const loc = locateWall(this.data.walls, [hit.point.x, hit.point.y, hit.point.z], 0.05, n ? [n.x, n.y, n.z] : null);
         if (!loc) continue;
         result.id = loc.wall.id;
         result.face = loc.face;

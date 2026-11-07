@@ -428,15 +428,38 @@ export function buildWallShell(walls, doors = []) {
 
 // 拾取辅助：命中点 → 最近的墙与该墙的 face（与 wallNormal(wall, face) 语义一致，
 // 对顶盖/门楣底面命中同样稳健）。point 为 [x, y, z]。
-export function locateWall(walls, point, tol = 0.05) {
+// hitNormal 为射线命中的世界法向（可选）：T/L 接头处命中点常同时落在多面墙的容差管内，
+// 距中心线最近不一定是被点的墙（如点 stem 墙面却更近宿主中心线）——此时用法向过滤候选，
+// 仅保留与某个面法向夹角 ≤60° 的墙；全部被过滤时回退最近距离，保证顶盖/门楣命中仍稳健。
+export function locateWall(walls, point, tol = 0.05, hitNormal = null) {
   const [x, y, z] = point;
-  let best = null, bestD = Infinity;
-  for (const w of walls || []) {
-    const d = pointSegDist([x, z], w.start, w.end);
-    const s = (w.thickness || 0.2) / 2;
-    const h = w.height || 2.8;
-    if (d <= s + tol && y >= -tol && y <= h + tol && d < bestD) { bestD = d; best = w; }
+  let hn = null;
+  if (hitNormal) {
+    const l = Math.hypot(hitNormal[0], hitNormal[1], hitNormal[2]);
+    if (l > 1e-9) hn = [hitNormal[0] / l, hitNormal[1] / l, hitNormal[2] / l];
   }
+  // useNormal：仅保留命中法向与某个面法向夹角 ≤60° 的候选
+  const scan = useNormal => {
+    let best = null, bestD = Infinity;
+    for (const w of walls || []) {
+      const d = pointSegDist([x, z], w.start, w.end);
+      const s = (w.thickness || 0.2) / 2;
+      const h = w.height || 2.8;
+      if (d > s + tol || y < -tol || y > h + tol || d >= bestD) continue;
+      if (useNormal) {
+        const dx = w.end[0] - w.start[0], dz = w.end[1] - w.start[1];
+        const len = Math.hypot(dx, dz) || 1;
+        // 墙两个面法线为 ±[dz, -dx]/len（y 分量为 0）；命中法向须与其中之一大致同向
+        const dot = Math.abs(hn[0] * dz / len - hn[2] * dx / len);
+        if (dot < 0.5) continue; // 夹角 >60°，不是被点的那个面
+      }
+      bestD = d;
+      best = w;
+    }
+    return best;
+  };
+  // 法向过滤后无幸存者（如顶盖/门楣底面命中，法向垂直于所有墙面）时回退最近距离
+  const best = (hn ? scan(true) : null) || scan(false);
   if (!best) return null;
   const dx = best.end[0] - best.start[0], dz = best.end[1] - best.start[1];
   const len = Math.hypot(dx, dz);

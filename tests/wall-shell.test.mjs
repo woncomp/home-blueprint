@@ -211,6 +211,21 @@ test('locateWall：按最近墙 + 命中点相对中心线侧判定 face，顶�
   assert.equal(locateWall([], [1.5, 1.4, 0]), null);
 });
 
+test('locateWall：T 接头处按命中法向消歧——点 stem 墙面不归属宿主墙', () => {
+  const host = wall('host', 0, 0, 8, 0); // 沿 x 轴
+  const stem = wall('stem', 4, 0, 4, 3); // T 连接，沿 z 向下；A 面法线 [dz,-dx]/len = [1,0]
+  // 命中点在 stem 墙面（+x 一侧），但距 host 中心线(0.01) 近于 stem(0.1)
+  const p = [4.1, 1.4, 0.01];
+  // 无法向：旧行为按最近中心线归属宿主
+  assert.equal(locateWall([host, stem], p).wall.id, 'host');
+  // 带命中法向：法向与宿主墙面垂直被过滤，正确归属 stem
+  const loc = locateWall([host, stem], p, 0.05, [1, 0, 0]);
+  assert.equal(loc.wall.id, 'stem');
+  assert.equal(loc.face, 0);
+  // 命中法向垂直于所有墙面（顶盖）：过滤后无幸存者，回退最近距离
+  assert.equal(locateWall([host, stem], p, 0.05, [0, 1, 0]).wall.id, 'host');
+});
+
 // ---------- 组合场景（默认户型风格的闭环房间） ----------
 
 test('闭环房间：顶面积 == 墙带并集面积，无重叠无重复面', () => {
