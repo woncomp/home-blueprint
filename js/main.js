@@ -343,6 +343,7 @@ function toast(msg, isError = false) {
 window.__app = app;       // 调试句柄
 window.__scene = scene3d;
 window.__plan = plan2d;
+window.__wallface = wallface;
 
 (async function start() {
   app.data = await loadDefaultData();

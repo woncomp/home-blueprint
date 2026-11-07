@@ -23,6 +23,7 @@ export class WallFaceDialog {
     this.selectedNodeId = null;
     this.selectedWireId = null;
     this.dragging = null;
+    this.snapGuideH = null;
 
     document.getElementById('wallface-close').addEventListener('click', () => this.close());
     document.getElementById('wallface-backdrop').addEventListener('click', () => this.close());
@@ -48,6 +49,7 @@ export class WallFaceDialog {
     this.selectedNodeId = null;
     this.selectedWireId = null;
     this.dragging = null;
+    this.snapGuideH = null;
     this.dialog.classList.remove('hidden');
     this.setTool('select');
     this.render();
@@ -180,6 +182,25 @@ export class WallFaceDialog {
       });
       ty.textContent = m + 'm';
       this.svg.appendChild(ty);
+    }
+    // 高度参考线（均分墙面），吸附到某条时高亮
+    for (const g of this.heightGuides()) {
+      const hit = this.snapGuideH != null && Math.abs(g - this.snapGuideH) < 1e-9;
+      this.svg.appendChild(el('line', {
+        x1: this.posX(0), y1: this.heightY(g),
+        x2: this.posX(this.view.len), y2: this.heightY(g),
+        stroke: hit ? '#4a90d9' : '#c3cdd9',
+        'stroke-width': hit ? 2.5 : 1,
+        'stroke-dasharray': hit ? 'none' : '5 4',
+        'pointer-events': 'none',
+      }));
+      const gt = el('text', {
+        x: this.posX(this.view.len) + 6, y: this.heightY(g) + 3,
+        'font-size': 10, fill: hit ? '#4a90d9' : '#a8b4c0',
+        'pointer-events': 'none',
+      });
+      gt.textContent = g.toFixed(2);
+      this.svg.appendChild(gt);
     }
 
     this.renderBreakerBox();
@@ -433,7 +454,10 @@ export class WallFaceDialog {
     if (this.tool === 'turn' || this.tool === 'split' ||
         this.tool === 'socket' || this.tool === 'switch' || this.tool === 'light') {
       const local = clamp(this.xPos(pt.x), 0, this.view.len);
-      const height = clamp(this.yHeight(pt.y), 0, this.view.h);
+      const rawH = clamp(this.yHeight(pt.y), 0, this.view.h);
+      const snapped = this.snapHeight(rawH, e.altKey);
+      this.snapGuideH = snapped !== rawH ? snapped : null;
+      const height = snapped;
       const type = ['socket', 'switch', 'light'].includes(this.tool) ? 'device' : this.tool;
       const node = createNode(type, this.wallId, this.face, round4(this.tOf(local)), round2(height), this.tool);
       this.data.nodes.push(node);
@@ -452,13 +476,17 @@ export class WallFaceDialog {
     if (!node || node.type === 'terminal') return;
     const pt = this.svgPoint(e);
     node.pos = round4(this.tOf(clamp(this.xPos(pt.x), 0, this.view.len)));
-    node.height = round2(clamp(this.yHeight(pt.y), 0, this.view.h));
+    const rawH = clamp(this.yHeight(pt.y), 0, this.view.h);
+    const snapped = this.snapHeight(rawH, e.altKey);
+    this.snapGuideH = snapped !== rawH ? snapped : null;
+    node.height = round2(snapped);
     this.dragging.moved = true;
     this.render();
     this.renderInfo();
   }
 
   onSvgMouseUp() {
+    this.snapGuideH = null;
     if (this.dragging && this.dragging.moved) this.changed();
     else if (this.dragging) this.render();
     this.dragging = null;
@@ -468,15 +496,15 @@ export class WallFaceDialog {
     if (this.mode !== 'edit') return;
     const pt = this.svgPoint(e);
     if (['turn', 'split', 'socket', 'switch', 'light'].includes(this.tool)) {
-      this.showPreview(pt);
+      this.showPreview(pt, e.altKey);
     }
   }
 
-  showPreview(pt) {
+  showPreview(pt, altKey) {
     const old = this.svg.querySelector('.preview');
     if (old) old.remove();
     const x = this.posX(clamp(this.xPos(pt.x), 0, this.view.len));
-    const y = this.heightY(clamp(this.yHeight(pt.y), 0, this.view.h));
+    const y = this.heightY(this.snapHeight(clamp(this.yHeight(pt.y), 0, this.view.h), altKey));
     this.svg.appendChild(el('circle', { cx: x, cy: y, r: 8, fill: 'none', stroke: '#4a90d9', 'stroke-dasharray': '3 3', class: 'preview', 'pointer-events': 'none' }));
   }
 
@@ -519,7 +547,7 @@ export class WallFaceDialog {
     this.infoEl.innerHTML = '';
     if (!this.data) return;
     const toolHints = {
-      select: '拖动节点可调整其沿墙位置与高度。',
+      select: '拖动节点可调整其沿墙位置与高度；靠近横向参考线时高度自动吸附（按住 Alt 禁用吸附）。',
       wire: this.wirePending ? '已选第一个端点，点击第二个端点完成连线。' : '依次点击两个端点/设备来连接电线。',
       turn: '点击墙面放置转弯端点。',
       split: '点击墙面放置分线端点。',
