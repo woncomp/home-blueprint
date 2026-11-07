@@ -206,6 +206,191 @@ export function nodeWorldPos(node, wallsById) {
   ];
 }
 
+// ---------- 相邻墙面与公共墙面角点（三墙展开 / 跨墙走线共用） ----------
+
+export const WALL_JOIN_EPS = 0.02; // 墙端/墙身交接判定容差（米）
+
+// 点 P 在墙线段上的最近参数 t（0~1，按墙长归一）；距离超过 tol 返回 null
+function wallParamNear(wall, px, pz, tol) {
+  const len = wallLen(wall);
+  if (!(len > 0)) return null;
+  const [dx, dz] = wallDir(wall);
+  const rx = px - wall.start[0], rz = pz - wall.start[1];
+  const s = Math.min(len, Math.max(0, rx * dx + rz * dz));
+  const cx = wall.start[0] + dx * s, cz = wall.start[1] + dz * s;
+  if (Math.hypot(px - cx, pz - cz) > tol) return null;
+  return s / len;
+}
+
+// 两面墙指定面的面线（墙面在平面上的投影线）求交：
+// 返回 { s, u, qx, qz, sin }（s/u 为交点沿两墙中心线的米制距离，sin 为夹角正弦）；平行返回 null
+function faceLineIntersect(wa, fa, wb, fb) {
+  const [dax, daz] = wallDir(wa);
+  const [dbx, dbz] = wallDir(wb);
+  const denom = dax * dbz - daz * dbx;
+  if (Math.abs(denom) < 1e-9) return null;
+  const offA = (wa.thickness || 0.2) / 2, offB = (wb.thickness || 0.2) / 2;
+  const [nax, naz] = wallNormal(wa, fa);
+  const [nbx, nbz] = wallNormal(wb, fb);
+  const ax = wa.start[0] + nax * offA, az = wa.start[1] + naz * offA;
+  const bx = wb.start[0] + nbx * offB, bz = wb.start[1] + nbz * offB;
+  const s = ((bx - ax) * dbz - (bz - az) * dbx) / denom;
+  const u = ((bx - ax) * daz - (bz - az) * dax) / denom;
+  return { s, u, qx: ax + dax * s, qz: az + daz * s, sin: Math.abs(denom) };
+}
+
+// 两面墙中心线是否相接（端点落在对方墙身/端点上，或中心线相交）
+function wallsConnected(wa, wb) {
+  const tol = (wa.thickness || 0.2) / 2 + (wb.thickness || 0.2) / 2 + WALL_JOIN_EPS;
+  for (const p of [wa.start, wa.end]) {
+    if (wallParamNear(wb, p[0], p[1], tol) != null) return true;
+  }
+  for (const p of [wb.start, wb.end]) {
+    if (wallParamNear(wa, p[0], p[1], tol) != null) return true;
+  }
+  // X 型交叉：端点互不靠近但中心线相交
+  const [dax, daz] = wallDir(wa);
+  const [dbx, dbz] = wallDir(wb);
+  const denom = dax * dbz - daz * dbx;
+  if (Math.abs(denom) < 1e-9) return false;
+  const rx = wb.start[0] - wa.start[0], rz = wb.start[1] - wa.start[1];
+  const s = (rx * dbz - rz * dbx) / denom;
+  const u = (rx * daz - rz * dax) / denom;
+  return s >= -1e-9 && s <= wallLen(wa) + 1e-9 && u >= -1e-9 && u <= wallLen(wb) + 1e-9;
+}
+
+// 两面墙指定面的公共墙面角点（面线交点）：仅当两墙几何相邻（端部交接/T 型/X 型）时返回 [x, z]，否则 null
+export function wallFaceCorner(wallsById, wallA, faceA, wallB, faceB) {
+  const wa = wallsById.get(wallA), wb = wallsById.get(wallB);
+  if (!wa || !wb || wallA === wallB) return null;
+  const hit = faceLineIntersect(wa, faceA, wb, faceB);
+  if (!hit) return null;
+  // 面线交点允许超出墙端：面线偏移导致的越界量 ≈ 厚度半宽 / sin(夹角)
+  const offA = (wa.thickness || 0.2) / 2, offB = (wb.thickness || 0.2) / 2;
+  const marginA = (offA + offB) / hit.sin + 0.01;
+  const marginB = marginA;
+  if (hit.s < -marginA || hit.s > wallLen(wa) + marginA) return null;
+  if (hit.u < -marginB || hit.u > wallLen(wb) + marginB) return null;
+  if (!wallsConnected(wa, wb)) return null;
+  return [hit.qx, hit.qz];
+}
+
+// 电线 3D 路径点：同墙/不可相邻时横平竖直（水平到平面中点→垂直折角→水平到达）；
+// 跨墙且几何相邻时经两面墙公共墙面角点走线（起点高度角点→终点高度角点）。
+// 返回 [[x,y,z], ...]（至少 2 点）；端点缺墙等无效情况返回 null
+export function wirePathPoints(wallsById, na, nb) {
+  const p1 = nodeWorldPos(na, wallsById);
+  const p2 = nodeWorldPos(nb, wallsById);
+  if (!p1 || !p2) return null;
+  const dedupe = raw => {
+    const pts = [];
+    for (const p of raw) {
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) > 0.01) pts.push(p);
+    }
+    return pts;
+  };
+  if (na.wall !== nb.wall) {
+    const corner = wallFaceCorner(wallsById, na.wall, na.face, nb.wall, nb.face);
+    if (corner) {
+      const pts = dedupe([
+        [p1[0], p1[1], p1[2]],
+        [corner[0], p1[1], corner[1]],
+        [corner[0], p2[1], corner[1]],
+        [p2[0], p2[1], p2[2]],
+      ]);
+      if (pts.length >= 2) return pts;
+    }
+  }
+  const mx = (p1[0] + p2[0]) / 2, mz = (p1[2] + p2[2]) / 2;
+  const pts = dedupe([
+    [p1[0], p1[1], p1[2]],
+    [mx, p1[1], mz],
+    [mx, p2[1], mz],
+    [p2[0], p2[1], p2[2]],
+  ]);
+  return pts.length >= 2 ? pts : null;
+}
+
+// 邻墙面选择：优先按房间归属（同一空间一侧），开放/外侧面用几何方向回退
+function pickNeighborFace(candWall, candSeg, room, towardDir) {
+  // room：当前墙段可见侧房间 key；towardDir：显示坐标中指向段边界的单位方向
+  if (room != null && candSeg) {
+    if (candSeg.left === room) return 0;
+    if (candSeg.right === room) return 1;
+  }
+  if (room == null && candSeg) {
+    // 开放侧：邻墙段两侧恰一侧无房间 → 无房间面即外侧面
+    const nulls = [];
+    if (candSeg.left == null) nulls.push(0);
+    if (candSeg.right == null) nulls.push(1);
+    if (nulls.length === 1) return nulls[0];
+  }
+  // 几何回退：选法线沿行进方向分量最大的面（围绕 viewer 一侧绕角）
+  let best = null, bestScore = -Infinity;
+  for (const f of [0, 1]) {
+    const [nx, nz] = wallNormal(candWall, f);
+    const score = nx * towardDir[0] + nz * towardDir[1];
+    if (score > bestScore + 1e-12) { bestScore = score; best = f; }
+  }
+  return best;
+}
+
+// 面向墙面视角（B 面 start→end 从左到右，A 面反向展开）下，当前墙段左右边界处的相邻墙面。
+// 返回 { left, right }，每项为 { wallId, face, seg } 或 null；seg 为逻辑墙段快照。
+// walls：墙数组；wallSegments：buildWallSegments 的结果；seg 为当前墙段快照（可带 index/t0/t1，可 null）
+export function adjacentWallViews(walls, wallSegments, wallId, face, seg) {
+  const empty = { left: null, right: null };
+  const wall = (walls || []).find(w => w.id === wallId);
+  if (!wall) return empty;
+  const segs = segmentsForWall(wallSegments, wallId);
+  const t0 = seg ? seg.t0 : 0;
+  const t1 = seg ? seg.t1 : 1;
+  const [dx, dz] = wallDir(wall);
+  const endPoint = t => [wall.start[0] + (wall.end[0] - wall.start[0]) * t,
+                         wall.start[1] + (wall.end[1] - wall.start[1]) * t];
+  const displayDir = face === 1 ? [dx, dz] : [-dx, -dz]; // 显示坐标左→右的平面方向
+
+  const findNeighbor = (tEnd, towardDisplay) => {
+    const [px, pz] = endPoint(tEnd);
+    // 该边界点所在墙段的可见侧房间 key（开放/外侧面为 null）
+    const boundarySeg = segOfNode(segs, tEnd);
+    const room = boundarySeg ? (face === 0 ? boundarySeg.left : boundarySeg.right) : null;
+    let best = null;
+    for (const cand of walls) {
+      if (cand.id === wallId) continue;
+      const tol = Math.max(WALL_JOIN_EPS, ((wall.thickness || 0.2) + (cand.thickness || 0.2)) / 2);
+      const tc = wallParamNear(cand, px, pz, tol);
+      if (tc == null) continue;
+      // 转角优先：与当前墙方向偏差越大越像"转弯的邻墙"，共线延续靠后；
+      // 完全同向（延长线）不算邻墙。同分取 id 较小者保证确定性
+      const [cax, caz] = wallDir(cand);
+      const turn = Math.abs(cax * dz - caz * dx);
+      const score = turn - (cand.id < wallId ? 1e-9 : 0);
+      if (turn < 1e-6) continue;
+      if (!best || score > best.score) best = { cand, tc, score };
+    }
+    if (!best) return null;
+    const candSeg = segOfNode(segmentsForWall(wallSegments, best.cand.id), best.tc);
+    const candFace = pickNeighborFace(best.cand, candSeg, room,
+      towardDisplay ? displayDir : [-displayDir[0], -displayDir[1]]);
+    if (candFace == null) return null;
+    return {
+      wallId: best.cand.id,
+      face: candFace,
+      seg: { id: candSeg.id, wallId: candSeg.wallId, index: candSeg.index, t0: candSeg.t0, t1: candSeg.t1 },
+    };
+  };
+
+  // B 面：左边界=t0、右边界=t1；A 面反向：左边界=t1、右边界=t0
+  const leftT = face === 1 ? t0 : t1;
+  const rightT = face === 1 ? t1 : t0;
+  return {
+    left: findNeighbor(leftT, false),
+    right: findNeighbor(rightT, true),
+  };
+}
+
 // ---------- 房间检测（平面直线图的面遍历） ----------
 
 function vkey(p) {
@@ -321,15 +506,22 @@ export function detectRooms(walls) {
     }
   }
 
-  // 按面积过滤：去掉外平面，保留面积在一定范围内的环
-  const withArea = faces.map(f => ({ pts: f, area: Math.abs(polygonArea(f)) }));
-  withArea.sort((a, b) => b.area - a.area);
-  const rooms = [];
-  const faceKey = withArea.map((f, i) => {
-    if (f.area < 0.5 || i === 0) return null; // 微面与外平面不算房间
-    rooms.push(f);
-    return canonicalKey(f.pts);
+  // 按面积过滤：去掉外平面，保留面积在一定范围内的环。
+  // 注意 faceKey 必须以"面发现顺序"（faces 下标）索引——halfFace 记录的是发现序号；
+  // 外平面按面积排序取最大者，但 key 数组不能按排序后下标建，否则多房间时左右归属会错位
+  const areas = faces.map(f => Math.abs(polygonArea(f)));
+  let exteriorIdx = 0;
+  for (let i = 1; i < faces.length; i++) {
+    if (areas[i] > areas[exteriorIdx]) exteriorIdx = i;
+  }
+  const faceKey = faces.map((f, i) => {
+    if (areas[i] < 0.5 || i === exteriorIdx) return null; // 微面与外平面不算房间
+    return canonicalKey(f);
   });
+  const roomIdx = faces.map((f, i) => i)
+    .filter(i => faceKey[i] != null)
+    .sort((a, b) => areas[b] - areas[a]);
+  const rooms = roomIdx.map(i => ({ pts: faces[i], area: areas[i] }));
   // 每条墙子段的 A面/B面 侧房间：半边 a→b（与墙同向）左侧是 A面侧，b→a 左侧是 B面侧
   const segRooms = new Map(); // wallId -> [{t0, t1, left, right}]
   for (const e of edgeInfos) {
@@ -343,7 +535,7 @@ export function detectRooms(walls) {
     rooms: rooms.map(f => ({
       key: canonicalKey(f.pts),
       points: f.pts,
-      area: Math.abs(polygonArea(f.pts)),
+      area: f.area,
     })),
     segRooms,
   };

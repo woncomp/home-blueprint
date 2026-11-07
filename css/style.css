@@ -118,9 +118,24 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 .wf-tool.active { background: #4a90d9; border-color: #4a90d9; color: #fff; }
 #wallface-close { padding: 4px 10px; border: none; border-radius: 4px; background: #555; color: #fff; cursor: pointer; }
 #wallface-body { flex: 1; display: flex; min-height: 0; }
-#wallface-svg { flex: 1; background: #fafafa; cursor: crosshair; }
-#wallface-side { width: 220px; border-left: 1px solid #ddd; padding: 10px; overflow-y: auto; }
+#wallface-scroll {
+  flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  background: #fafafa;
+}
+#wallface-svg { display: block; height: 100%; cursor: crosshair; }
+#wallface-side { width: 220px; border-left: 1px solid #ddd; padding: 10px; overflow-y: auto; flex-shrink: 0; }
 #wallface-info { font-size: 13px; color: #333; line-height: 1.7; }
+#wallface-svg .wf-panel-band { stroke-width: 1; }
+#wallface-svg .wf-panel-band.active { stroke: #4a90d9; stroke-width: 2.5; }
+#wallface-svg .wf-panel-title { font-size: 13px; font-weight: bold; fill: #333; }
+#wallface-svg .wf-panel-title .sub { font-weight: normal; fill: #999; }
+#wallface-svg .wf-panel-badge { font-size: 11px; fill: #4a90d9; }
+#wallface-svg .wf-activate rect { fill: #4a90d9; cursor: pointer; }
+#wallface-svg .wf-activate rect:hover { fill: #357ac2; }
+#wallface-svg .wf-activate text { fill: #fff; font-size: 11px; cursor: pointer; }
+#wallface-svg .wf-seam { stroke: #b8c4d0; stroke-dasharray: 4 3; }
+#wallface-svg .wf-corner { stroke-width: 2.5; fill: none; }
+#wallface-svg .wf-corner-hit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
 
 svg .node { cursor: pointer; }
 svg .node:hover { stroke: #4a90d9; stroke-width: 2; }

@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, segHasCircuit } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, segHasCircuit, BREAKER_BOX_SIZE } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -182,6 +182,11 @@ panel.on('deleteNode', id => deleteNodeById(id));
 function deleteNodeById(id) {
   const node = app.data.nodes.find(n => n.id === id);
   if (!node) return;
+  // 墙面 2D 展开期间：右侧面板/全局删除同样只允许当前活动墙段
+  if (wallface.isOpen() && !wallface.isActiveNode(node)) {
+    toast('墙面展开中：只能删除当前墙面的设备（先在 2D 视图「设为当前墙」）', true);
+    return;
+  }
   if (node.type === 'terminal') { toast('强电箱端子不能单独删除，请删除所属断路器', true); return; }
   if (node.deviceType === 'breakerBox') { toast('强电箱不能删除', true); return; }
   app.data.nodes = app.data.nodes.filter(n => n.id !== id);
@@ -232,18 +237,20 @@ function deleteDoorById(id) {
 }
 
 // ---------- 强电箱端子同步 ----------
+// 端子高度按断路器数量在箱体垂直范围内均分（上下各留 0.06m 边距），避免出线重叠
 function syncTerminals() {
   const box = findBreakerBox(app.data);
   if (!box) return;
-  for (const br of box.breakers) {
-    const node = app.data.nodes.find(n => n.id === br.terminal);
-    if (node) {
-      node.wall = box.wall;
-      node.face = box.face;
-      node.pos = box.pos;
-      node.height = box.height;
-    }
-  }
+  const n = box.breakers.length;
+  const span = BREAKER_BOX_SIZE.h / 2 - 0.06;
+  box.breakers.forEach((br, i) => {
+    const node = app.data.nodes.find(x => x.id === br.terminal);
+    if (!node) return;
+    node.wall = box.wall;
+    node.face = box.face;
+    node.pos = box.pos;
+    node.height = n <= 1 ? box.height : box.height - span + 2 * span * (i / (n - 1));
+  });
 }
 
 // ---------- 3D 画布交互 ----------

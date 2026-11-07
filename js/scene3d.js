@@ -4,7 +4,7 @@ import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
-  buildWallSegments, segmentsForWall, segOfNode,
+  buildWallSegments, segmentsForWall, segOfNode, wirePathPoints,
 } from './model.js';
 import { buildWallShell, locateWall } from './wallgeometry.js';
 
@@ -321,19 +321,11 @@ export class Scene3D {
   }
 
   // ---------- 电线 ----------
-  wireEndpoints(wire) {
-    const walls = this.wallsById();
-    const nodes = this.nodesById();
-    const a = nodes.get(wire.from), b = nodes.get(wire.to);
-    if (!a || !b) return null;
-    return [nodeWorldPos(a, walls), nodeWorldPos(b, walls)];
-  }
-
   buildWires() {
     for (const wire of this.data.wires) {
-      const ends = this.wireEndpoints(wire);
-      if (!ends) continue;
-      const [p1, p2] = ends;
+      const na = this.nodesById().get(wire.from);
+      const nb = this.nodesById().get(wire.to);
+      if (!na || !nb) continue;
       const isSel = this.selected && this.selected.kind === 'wire' && this.selected.id === wire.id;
       const cIdx = this.circuits.wireCircuit.get(wire.id);
       let color = cIdx != null ? new THREE.Color(this.circuits.circuits[cIdx].color) : new THREE.Color(0x777777);
@@ -341,9 +333,9 @@ export class Scene3D {
       if (this.highlightCircuit != null && cIdx !== this.highlightCircuit) opacity = 0.12;
       if (isSel) color = new THREE.Color(0xffee55);
 
-      // 横平竖直：水平走到平面中点 → 垂直折角 → 水平到达
-      const pts = orthoPath(p1, p2);
-      if (pts.length < 2) continue;
+      // 同墙横平竖直；跨墙且几何相邻经公共墙面角点走线；否则回退旧路径
+      const pts = wirePathPoints(this.wallsById(), na, nb);
+      if (!pts || pts.length < 2) continue;
       for (let i = 0; i < pts.length - 1; i++) {
         this.addWireSegment(pts[i], pts[i + 1], color, opacity, wire.id);
       }
@@ -531,23 +523,6 @@ export function makeTextSprite(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w =
   sprite.scale.set(scale * w / h, scale, 1);
   sprite.renderOrder = 10;
   return sprite;
-}
-
-// 两节点间横平竖直的走线路径：水平到平面中点 → 垂直折角 → 水平到达
-function orthoPath(p1, p2) {
-  const mx = (p1[0] + p2[0]) / 2, mz = (p1[2] + p2[2]) / 2;
-  const raw = [
-    [p1[0], p1[1], p1[2]],
-    [mx, p1[1], mz],
-    [mx, p2[1], mz],
-    [p2[0], p2[1], p2[2]],
-  ];
-  const pts = [];
-  for (const p of raw) {
-    const last = pts[pts.length - 1];
-    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) > 0.01) pts.push(p);
-  }
-  return pts;
 }
 
 function roundRect(ctx, x, y, w, h, r) {

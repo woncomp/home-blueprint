@@ -1,19 +1,28 @@
-// 墙面 2D 展开对话框：SVG 正视图，查看与编辑该面电路
+// 墙面 2D 展开对话框：三墙展开视图（左邻墙 / 当前墙 / 右邻墙），SVG 正视图查看与编辑电路。
+// 显示方向以"面对墙面"为准：B 面沿墙 start→end 从左到右，A 面水平反向（不修改持久化 pos）。
+// 相邻墙面只读：可查看、可选作跨墙电线端点；增删、拖动、属性编辑仅限当前墙。
 import {
-  wallLen, wallDir, wallNormal, nodeWorldPos, createNode, createWire,
+  wallLen, wallDir, nodeWorldPos, createNode, createWire,
   addLink, removeLink, linksOf, computeCircuits,
-  DEVICE_TYPES, NODE_TYPE_NAMES, CIRCUIT_COLORS, findBreakerBox, BREAKER_BOX_SIZE,
+  detectRooms, buildWallSegments, adjacentWallViews,
+  DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 // 高度方向吸附：HEIGHT_SEGMENTS 段均分墙面 → HEIGHT_SEGMENTS-1 条横向参考线
 const HEIGHT_SEGMENTS = 6;
 const Y_SNAP_PX = 8; // 吸附半径（屏幕像素，随缩放换算成米）
+// 三墙展开布局（像素）
+const PAD_X = 16;        // SVG 左右留白
+const PANEL_GAP = 40;    // 相邻墙面板间距（跨墙电线在此竖直转折）
+const TOP_PAD = 44;      // 标题栏高度
+const BOTTOM_PAD = 40;   // 底部刻度留白
 
 export class WallFaceDialog {
   constructor(cbs) {
-    this.cbs = cbs; // { onChange, onSelect }
+    this.cbs = cbs; // { onChange, onSelect, onNotify, onClose }
     this.dialog = document.getElementById('wallface-dialog');
+    this.scroll = document.getElementById('wallface-scroll');
     this.svg = document.getElementById('wallface-svg');
     this.titleEl = document.getElementById('wallface-title');
     this.infoEl = document.getElementById('wallface-info');
@@ -24,6 +33,9 @@ export class WallFaceDialog {
     this.selectedWireId = null;
     this.dragging = null;
     this.snapGuideH = null;
+    this.views = null;      // 三墙视图记录（render 时计算）
+    this.wallSegments = null;
+    this._centerPending = false;
 
     document.getElementById('wallface-close').addEventListener('click', () => this.close());
     document.getElementById('wallface-backdrop').addEventListener('click', () => this.close());
@@ -37,6 +49,7 @@ export class WallFaceDialog {
     window.addEventListener('mousemove', e => this.onSvgMouseMove(e));
     window.addEventListener('mouseup', e => this.onSvgMouseUp(e));
     this.svg.addEventListener('mousemove', e => this.onSvgHover(e));
+    window.addEventListener('resize', () => { if (this.isOpen()) this.render(); });
   }
 
   // seg：逻辑墙段快照 {id, wallId, index, t0, t1}（派生拆分），null 视为整墙
@@ -50,6 +63,9 @@ export class WallFaceDialog {
     this.selectedWireId = null;
     this.dragging = null;
     this.snapGuideH = null;
+    this.wallSegments = null;
+    this.views = null;
+    this._centerPending = true;
     this.dialog.classList.remove('hidden');
     this.setTool('select');
     this.render();
@@ -58,6 +74,7 @@ export class WallFaceDialog {
   close() {
     this.dialog.classList.add('hidden');
     this.data = null;
+    this.views = null;
     if (this.cbs.onClose) this.cbs.onClose();
   }
 
@@ -75,145 +92,257 @@ export class WallFaceDialog {
     this.renderInfo();
   }
 
-  wall() { return this.data.walls.find(w => w.id === this.wallId); }
+  wall() { return (this.data.walls || []).find(w => w.id === this.wallId); }
 
-  // ---------- 坐标映射 ----------
-  // 视图内统一使用"段内米制"（0 ~ 段长）；node.pos 是沿原始整墙的 0~1，
-  // 两者通过 t0/墙长换算
-  computeView() {
-    const wall = this.wall();
-    const t0 = this.seg ? this.seg.t0 : 0;
-    const t1 = this.seg ? this.seg.t1 : 1;
-    const len = (t1 - t0) * wallLen(wall);
-    const h = wall.height || 2.8;
-    const svgW = this.svg.clientWidth || 800;
-    const svgH = this.svg.clientHeight || 500;
-    const scale = Math.min((svgW - 80) / len, (svgH - 120) / h, 120);
-    this.view = {
-      scale,
-      ox: (svgW - len * scale) / 2,
-      oy: (svgH - h * scale) / 2 + 10,
-      len, h,
+  // ---------- 三墙视图 ----------
+  // 每个视图：{ role, wallId, face, seg, wall, len, h, reversed, baseX, w }
+  // 坐标映射（显示像素）：posX(v, local)、heightY(height)；local 为段内米制
+  computeViews() {
+    const walls = this.data.walls || [];
+    if (!this.wallSegments) {
+      const { segRooms } = detectRooms(walls);
+      this.wallSegments = buildWallSegments(segRooms, walls);
+    }
+    const mk = (role, wallId, face, seg) => {
+      const wall = walls.find(w => w.id === wallId);
+      if (!wall) return null;
+      const t0 = seg ? seg.t0 : 0;
+      const t1 = seg ? seg.t1 : 1;
+      return {
+        role, wallId, face, seg, wall,
+        len: Math.max((t1 - t0) * wallLen(wall), 0.01),
+        h: wall.height || 2.8,
+        reversed: face === 0, // 面对墙面：B 面 start→end 从左到右，A 面反向
+      };
+    };
+    const adj = adjacentWallViews(walls, this.wallSegments, this.wallId, this.face, this.seg);
+    this.views = [
+      mk('left', adj.left && adj.left.wallId, adj.left && adj.left.face, adj.left && adj.left.seg),
+      mk('active', this.wallId, this.face, this.seg),
+      mk('right', adj.right && adj.right.wallId, adj.right && adj.right.face, adj.right && adj.right.seg),
+    ].filter(Boolean);
+
+    const svgH = this.scroll.clientHeight || 500;
+    const svgW = this.scroll.clientWidth || 800;
+    const maxH = Math.max(...this.views.map(v => v.h), 0.5);
+    const scale = Math.min(120, (svgH - TOP_PAD - BOTTOM_PAD) / maxH);
+    this.scale = scale;
+    this.floorY = TOP_PAD + maxH * scale;
+    let x = PAD_X;
+    for (const v of this.views) {
+      v.baseX = x;
+      v.w = v.len * scale;
+      x += v.w + PANEL_GAP;
+    }
+    this.svgW = Math.max(x - PANEL_GAP + PAD_X, svgW);
+    this.svgH = svgH;
+  }
+
+  activeView() { return this.views && this.views.find(v => v.role === 'active'); }
+
+  // 节点所属的可见视图（三面墙中匹配墙/面/段），不可见返回 null
+  viewOfNode(node) {
+    if (!this.views || !node) return null;
+    return this.views.find(v => v.wallId === node.wall && v.face === node.face && this.inSegV(v, node)) || null;
+  }
+
+  // 当前墙视图（无 views 时按 open 参数合成，保证测试与内部换算可用）
+  currentView() {
+    const av = this.activeView();
+    if (av) return av;
+    return {
+      role: 'active', wallId: this.wallId, face: this.face, seg: this.seg,
+      wall: this.wall(), len: this.wall() ? wallLen(this.wall()) : 1,
+      h: this.wall() ? (this.wall().height || 2.8) : 2.8,
+      reversed: this.face === 0, baseX: 0, w: 0,
     };
   }
-  posX(local) { return this.view.ox + local * this.view.scale; }
-  heightY(height) { return this.view.oy + (this.view.h - height) * this.view.scale; }
-  xPos(x) { return (x - this.view.ox) / this.view.scale; }
-  yHeight(y) { return this.view.h - (y - this.view.oy) / this.view.scale; }
 
-  // 高度参考线：把墙高均分 HEIGHT_SEGMENTS 段，返回中间 HEIGHT_SEGMENTS-1 条的高度（米）
-  heightGuides() {
-    const g = [];
-    for (let k = 1; k < HEIGHT_SEGMENTS; k++) g.push(this.view.h * k / HEIGHT_SEGMENTS);
-    return g;
+  posX(v, local) {
+    return v.baseX + (v.reversed ? v.len - local : local) * this.scale;
   }
-  // 靠近参考线（Y_SNAP_PX 屏幕像素内）则吸附到线上；altKey 禁用
-  snapHeight(height, altKey) {
-    if (altKey) return height;
-    const r = Y_SNAP_PX / this.view.scale;
-    let best = null, bd = r;
-    for (const g of this.heightGuides()) {
-      const d = Math.abs(height - g);
-      if (d <= bd) { bd = d; best = g; }
-    }
-    return best == null ? height : best;
+  heightY(height) { return this.floorY - height * this.scale; }
+  xPos(v, px) {
+    const local = (px - v.baseX) / this.scale;
+    return v.reversed ? v.len - local : local;
   }
+  yHeight(py) { return (this.floorY - py) / this.scale; }
 
-  // 节点 pos（整墙 0~1）→ 段内米制
-  localOf(node) {
-    const t0 = this.seg ? this.seg.t0 : 0;
-    return (node.pos - t0) * wallLen(this.wall());
+  // ---------- 坐标映射（段内米制 ↔ 整墙 0~1） ----------
+  // 节点 pos（整墙 0~1）→ 段内米制；view 缺省用节点自己的可见视图
+  localOf(node, view) {
+    const v = view || this.viewOfNode(node) || this.currentView();
+    const t0 = v.seg ? v.seg.t0 : 0;
+    return (node.pos - t0) * wallLen(v.wall);
   }
   // 段内米制 → 整墙 0~1
-  tOf(local) {
-    const t0 = this.seg ? this.seg.t0 : 0;
-    return t0 + local / wallLen(this.wall());
+  tOf(local, view) {
+    const v = view || this.currentView();
+    const t0 = v.seg ? v.seg.t0 : 0;
+    return t0 + local / wallLen(v.wall);
   }
 
-  // 节点是否属于本逻辑墙段：半开区间 [t0,t1)，末段闭区间——恰在切点上归右侧段
-  inSeg(node) {
-    if (!this.seg) return true;
-    const { t0, t1 } = this.seg;
+  // 节点是否属于某视图的逻辑墙段：半开区间 [t0,t1)，末段闭区间
+  inSegV(v, node) {
+    if (!v.seg) return true;
+    const { t0, t1 } = v.seg;
     const last = t1 >= 1 - 1e-9;
     return node.pos >= t0 - 1e-9 && (last ? node.pos <= t1 + 1e-9 : node.pos < t1 - 1e-9);
+  }
+
+  inSeg(node) {
+    if (!this.seg) return true;
+    return this.inSegV({ seg: this.seg }, node);
   }
 
   nodesOnFace() {
     return this.data.nodes.filter(n => n.wall === this.wallId && n.face === this.face && this.inSeg(n));
   }
 
+  nodesOnView(v) {
+    return this.data.nodes.filter(n => n.wall === v.wallId && n.face === v.face && this.inSegV(v, n));
+  }
+
+  // 节点是否在当前活动墙段（供 main.js 全局删除守卫使用）
+  isActiveNode(node) {
+    if (!node) return false;
+    if (!this.views) return node.wall === this.wallId && node.face === this.face && this.inSeg(node);
+    const v = this.viewOfNode(node);
+    return !!v && v.role === 'active';
+  }
+
   // ---------- 渲染 ----------
   render() {
     if (!this.data) return;
-    this.computeView();
+    const prevScroll = this.scroll.scrollLeft;
+    this.computeViews();
     this.circuits = computeCircuits(this.data);
-    const wall = this.wall();
+    const av = this.activeView();
     const segTxt = this.seg && (this.seg.t0 > 1e-9 || this.seg.t1 < 1 - 1e-9) ? ` · 段 ${this.seg.index + 1}` : '';
-    this.titleEl.textContent = `墙 ${wall.id} · ${this.face === 0 ? 'A 面' : 'B 面'}${segTxt}（长 ${this.view.len.toFixed(2)}m × 高 ${this.view.h}m）`;
-    this.svg.innerHTML = '';
-    this.svg.setAttribute('viewBox', `0 0 ${this.svg.clientWidth || 800} ${this.svg.clientHeight || 500}`);
+    const neighbors = this.views.filter(v => v.role !== 'active').map(v => `${v.role === 'left' ? '左' : '右'} 墙 ${v.wallId}`).join('，');
+    this.titleEl.textContent = `墙 ${this.wallId} · ${this.face === 0 ? 'A 面' : 'B 面'}${segTxt}` +
+      (av ? `（长 ${av.len.toFixed(2)}m × 高 ${av.h}m）` : '') + (neighbors ? `　|　${neighbors}` : '');
 
-    // 墙面带
-    const band = el('rect', {
-      x: this.posX(0), y: this.heightY(this.view.h),
-      width: this.view.len * this.view.scale, height: this.view.h * this.view.scale,
-      fill: '#efeadf', stroke: '#bbb', 'stroke-width': 1,
-    });
-    this.svg.appendChild(band);
-    // 刻度
-    for (let m = 0; m <= Math.floor(this.view.len); m++) {
-      const tx = el('text', {
-        x: this.posX(m), y: this.heightY(this.view.h) + 16,
-        'text-anchor': 'middle', 'font-size': 11, fill: '#999',
+    this.svg.innerHTML = '';
+    this.svg.setAttribute('width', Math.round(this.svgW));
+    this.svg.setAttribute('height', Math.round(this.svgH));
+
+    for (const v of this.views) this.renderPanel(v);
+    this.renderWires();
+    for (const v of this.views) {
+      this.renderBreakerBox(v);
+      this.renderNodes(v);
+    }
+    this.renderInfo();
+
+    // 普通重绘保留滚动位置；打开/切换当前墙后把当前墙居中
+    if (this._centerPending && av) {
+      this._centerPending = false;
+      const target = av.baseX + av.w / 2 - this.scroll.clientWidth / 2;
+      this.scroll.scrollLeft = Math.max(0, target);
+    } else {
+      this.scroll.scrollLeft = Math.min(prevScroll, Math.max(0, this.svgW - this.scroll.clientWidth));
+    }
+  }
+
+  renderPanel(v) {
+    const isActive = v.role === 'active';
+    const x0 = v.baseX, x1 = v.baseX + v.w;
+    const bandTop = this.heightY(v.h);
+    // 面板标题
+    const segTxt = v.seg && (v.seg.t0 > 1e-9 || v.seg.t1 < 1 - 1e-9) ? ` · 段 ${v.seg.index + 1}` : '';
+    const title = el('text', { x: x0, y: 18, class: 'wf-panel-title' });
+    title.textContent = `墙 ${v.wallId} · ${v.face === 0 ? 'A 面' : 'B 面'}${segTxt}　长 ${v.len.toFixed(2)}m`;
+    this.svg.appendChild(title);
+    if (isActive) {
+      const badge = el('text', { x: x0, y: 34, class: 'wf-panel-badge' });
+      badge.textContent = '▶ 当前编辑';
+      this.svg.appendChild(badge);
+    }
+    // 相邻墙：标题右侧提供"设为当前墙"
+    if (!isActive) {
+      const btnW = 96, btnH = 20, bx = x1 - btnW, by = 6;
+      const g = el('g', { class: 'wf-activate' });
+      g.appendChild(el('rect', { x: bx, y: by, width: btnW, height: btnH, rx: 4 }));
+      const t = el('text', { x: bx + btnW / 2, y: by + 14, 'text-anchor': 'middle', 'pointer-events': 'none' });
+      t.textContent = '设为当前墙';
+      g.appendChild(t);
+      g.addEventListener('mousedown', e => {
+        e.stopPropagation();
+        this.activateView(v);
       });
-      tx.textContent = m + 'm';
-      this.svg.appendChild(tx);
+      this.svg.appendChild(g);
+    }
+    // 墙面带
+    this.svg.appendChild(el('rect', {
+      x: x0, y: bandTop, width: v.w, height: v.h * this.scale,
+      fill: isActive ? '#efeadf' : '#f5f2ea',
+      stroke: isActive ? '#4a90d9' : '#c8c8c8',
+      'stroke-width': isActive ? 2.5 : 1,
+      class: 'wf-panel-band' + (isActive ? ' active' : ''),
+    }));
+    // 沿墙刻度（按显示方向标注米数）
+    for (let m = 0; m <= Math.floor(v.len + 1e-9); m++) {
+      const tx = this.posX(v, m);
       const tick = el('line', {
-        x1: this.posX(m), y1: this.heightY(this.view.h),
-        x2: this.posX(m), y2: this.heightY(this.view.h) + 5,
+        x1: tx, y1: this.floorY, x2: tx, y2: this.floorY + 5,
         stroke: '#bbb',
       });
       this.svg.appendChild(tick);
-    }
-    for (let m = 0; m <= Math.floor(this.view.h); m++) {
-      const ty = el('text', {
-        x: this.posX(0) - 8, y: this.heightY(m) + 4,
-        'text-anchor': 'end', 'font-size': 11, fill: '#999',
+      const tt = el('text', {
+        x: tx, y: this.floorY + 17,
+        'text-anchor': 'middle', 'font-size': 11, fill: '#999',
       });
-      ty.textContent = m + 'm';
-      this.svg.appendChild(ty);
+      tt.textContent = m + 'm';
+      this.svg.appendChild(tt);
+    }
+    // 高度刻度（仅当前墙画数字，避免邻墙重复拥挤）
+    if (isActive) {
+      for (let m = 0; m <= Math.floor(v.h + 1e-9); m++) {
+        const ty = el('text', {
+          x: x0 - 6, y: this.heightY(m) + 4,
+          'text-anchor': 'end', 'font-size': 11, fill: '#999',
+        });
+        ty.textContent = m + 'm';
+        this.svg.appendChild(ty);
+      }
     }
     // 高度参考线（均分墙面），吸附到某条时高亮
-    for (const g of this.heightGuides()) {
+    for (const g of this.heightGuides(v)) {
       const hit = this.snapGuideH != null && Math.abs(g - this.snapGuideH) < 1e-9;
       this.svg.appendChild(el('line', {
-        x1: this.posX(0), y1: this.heightY(g),
-        x2: this.posX(this.view.len), y2: this.heightY(g),
+        x1: x0, y1: this.heightY(g), x2: x1, y2: this.heightY(g),
         stroke: hit ? '#4a90d9' : '#c3cdd9',
         'stroke-width': hit ? 2.5 : 1,
         'stroke-dasharray': hit ? 'none' : '5 4',
         'pointer-events': 'none',
       }));
-      const gt = el('text', {
-        x: this.posX(this.view.len) + 6, y: this.heightY(g) + 3,
-        'font-size': 10, fill: hit ? '#4a90d9' : '#a8b4c0',
-        'pointer-events': 'none',
-      });
-      gt.textContent = g.toFixed(2);
-      this.svg.appendChild(gt);
+      if (isActive) {
+        const gt = el('text', {
+          x: x1 + 6, y: this.heightY(g) + 3,
+          'font-size': 10, fill: hit ? '#4a90d9' : '#a8b4c0',
+          'pointer-events': 'none',
+        });
+        gt.textContent = g.toFixed(2);
+        this.svg.appendChild(gt);
+      }
     }
-
-    this.renderBreakerBox();
-    this.renderWires();
-    this.renderNodes();
-    this.renderInfo();
+    // 面板之间的公共边界提示（竖直虚线）
+    if (!isActive) {
+      const seamX = v.role === 'left' ? x1 + PANEL_GAP / 2 : x0 - PANEL_GAP / 2;
+      this.svg.appendChild(el('line', {
+        x1: seamX, y1: this.heightY(v.h), x2: seamX, y2: this.floorY,
+        class: 'wf-seam', 'pointer-events': 'none',
+      }));
+    }
   }
 
-  renderBreakerBox() {
+  renderBreakerBox(v) {
     const box = findBreakerBox(this.data);
-    if (!box || box.wall !== this.wallId || box.face !== this.face || !this.inSeg(box)) return;
-    const bw = BREAKER_BOX_SIZE.w * this.view.scale, bh = BREAKER_BOX_SIZE.h * this.view.scale;
-    const bx = this.posX(this.localOf(box) - BREAKER_BOX_SIZE.w / 2), by = this.heightY(box.height + BREAKER_BOX_SIZE.h / 2);
+    if (!box || box.wall !== v.wallId || box.face !== v.face || !this.inSegV(v, box)) return;
+    const bw = BREAKER_BOX_SIZE.w * this.scale, bh = BREAKER_BOX_SIZE.h * this.scale;
+    const bx = this.posX(v, this.localOf(box, v) - BREAKER_BOX_SIZE.w / 2);
+    const by = this.heightY(box.height + BREAKER_BOX_SIZE.h / 2);
     const g = el('g', {});
     g.appendChild(el('rect', {
       x: bx, y: by, width: bw, height: bh,
@@ -255,41 +384,75 @@ export class WallFaceDialog {
     this.svg.appendChild(g);
   }
 
+  // 两端点所在视图的公共边界 x（跨墙电线在此竖直转折）；不相邻返回 null
+  seamXBetween(va, vb) {
+    const roles = [va.role, vb.role];
+    let seam = null;
+    if (roles.includes('left') && roles.includes('active')) {
+      const left = va.role === 'left' ? va : vb;
+      seam = left.baseX + left.w + PANEL_GAP / 2;
+    } else if (roles.includes('right') && roles.includes('active')) {
+      const right = va.role === 'right' ? va : vb;
+      seam = right.baseX - PANEL_GAP / 2;
+    }
+    return seam;
+  }
+
   renderWires() {
-    const nodes = new Map(this.data.nodes.map(n => [n.id, n]));
+    const nodesById = new Map(this.data.nodes.map(n => [n.id, n]));
     for (const wire of this.data.wires) {
-      const a = nodes.get(wire.from), b = nodes.get(wire.to);
+      const a = nodesById.get(wire.from), b = nodesById.get(wire.to);
       if (!a || !b) continue;
-      const onFace = n => n.wall === this.wallId && n.face === this.face && this.inSeg(n);
-      if (!onFace(a) && !onFace(b)) continue;
-      // 端点映射到本面坐标：同墙（跨面/跨段）的端点取段内坐标并截断到本段边界，画虚线
-      const px = n => {
-        if (onFace(n)) return this.posX(this.localOf(n));
-        if (n.wall === this.wallId) return this.posX(clamp(this.localOf(n), 0, this.view.len));
-        return this.posX(n.pos * this.view.len);
-      };
-      const py = n => this.heightY(n.height);
+      const va = this.viewOfNode(a), vb = this.viewOfNode(b);
+      if (!va && !vb) continue;
       const cIdx = this.circuits.wireCircuit.get(wire.id);
       const color = cIdx != null ? this.circuits.circuits[cIdx].color : '#888';
-      const sameFace = onFace(a) && onFace(b);
+      const width = this.selectedWireId === wire.id ? 4 : 2.5;
+      const ya = this.heightY(a.height), yb = this.heightY(b.height);
       let hit, line;
-      if (sameFace) {
-        // 横平竖直：沿墙水平走线，在中点垂直折角
-        const mx = (px(a) + px(b)) / 2;
-        const pts = `${px(a)},${py(a)} ${mx},${py(a)} ${mx},${py(b)} ${px(b)},${py(b)}`;
+      if (va && vb && va === vb) {
+        // 同一可见墙段：横平竖直，沿墙水平走线，在中点垂直折角
+        const xa = this.posX(va, this.localOf(a, va));
+        const xb = this.posX(vb, this.localOf(b, vb));
+        const mx = (xa + xb) / 2;
+        const pts = `${xa},${ya} ${mx},${ya} ${mx},${yb} ${xb},${yb}`;
         hit = el('polyline', { points: pts, fill: 'none', class: 'wire-hit', 'data-wireid': wire.id });
-        line = el('polyline', { points: pts, fill: 'none', class: 'wire-line', stroke: color, 'stroke-width': this.selectedWireId === wire.id ? 4 : 2.5 });
-      } else {
-        const x1 = px(a), y1 = py(a), x2 = px(b), y2 = py(b);
-        hit = el('line', {
-          x1, y1, x2, y2,
-          class: 'wire-hit', 'data-wireid': wire.id,
+        line = el('polyline', { points: pts, fill: 'none', class: 'wire-line', stroke: color, 'stroke-width': width });
+      } else if (va && vb) {
+        // 两端都在可见墙面：经两面墙的公共边界转折（实线）
+        const seam = this.seamXBetween(va, vb);
+        const xa = this.posX(va, this.localOf(a, va));
+        const xb = this.posX(vb, this.localOf(b, vb));
+        let pts;
+        if (seam != null) {
+          pts = `${xa},${ya} ${seam},${ya} ${seam},${yb} ${xb},${yb}`;
+        } else {
+          pts = `${xa},${ya} ${xb},${yb}`; // 左邻↔右邻：虚线直连提示
+        }
+        hit = el('polyline', { points: pts, fill: 'none', class: 'wire-hit', 'data-wireid': wire.id });
+        line = el('polyline', {
+          points: pts, fill: 'none', class: 'wire-line', stroke: color, 'stroke-width': width,
+          ...(seam != null ? {} : { 'stroke-dasharray': '6 4' }),
         });
+      } else {
+        // 一端不可见：虚线引到本段边界（同墙截断到段端点，跨墙引到面板边缘）
+        const self = va ? a : b;
+        const other = va ? b : a;
+        const vs = va || vb;
+        const x1 = this.posX(vs, this.localOf(self, vs));
+        const y1 = va ? ya : yb;
+        const y2 = va ? yb : ya;
+        let x2;
+        if (other.wall === vs.wallId) {
+          x2 = this.posX(vs, clamp(this.localOf(other, vs), 0, vs.len));
+        } else {
+          const mid = vs.baseX + vs.w / 2;
+          x2 = x1 < mid ? vs.baseX : vs.baseX + vs.w;
+        }
+        hit = el('line', { x1, y1, x2, y2, class: 'wire-hit', 'data-wireid': wire.id });
         line = el('line', {
-          x1, y1, x2, y2,
-          class: 'wire-line',
-          stroke: color, 'stroke-width': this.selectedWireId === wire.id ? 4 : 2.5,
-          'stroke-dasharray': '6 4',
+          x1, y1, x2, y2, class: 'wire-line',
+          stroke: color, 'stroke-width': width, 'stroke-dasharray': '6 4',
         });
       }
       if (this.mode === 'edit') {
@@ -308,18 +471,27 @@ export class WallFaceDialog {
       this.svg.appendChild(hit);
       this.svg.appendChild(line);
     }
-    // links 画成跨面虚线弧
+    // links 画成紫色虚线弧
     for (const link of (this.data.links || [])) {
-      const a = this.data.nodes.find(n => n.id === link.a);
-      const b = this.data.nodes.find(n => n.id === link.b);
+      const a = nodesById.get(link.a), b = nodesById.get(link.b);
       if (!a || !b) continue;
-      const onFace = n => n.wall === this.wallId && n.face === this.face && this.inSeg(n);
-      if (!onFace(a) && !onFace(b)) continue;
-      const other = onFace(a) ? b : a;
-      const self = onFace(a) ? a : b;
-      const x1 = this.posX(this.localOf(self)), y1 = this.heightY(self.height);
-      const x2 = this.posX(other.wall === this.wallId ? clamp(this.localOf(other), 0, this.view.len) : other.pos * this.view.len);
-      const y2 = y1 + (other.face === self.face ? 0 : 26);
+      const va = this.viewOfNode(a), vb = this.viewOfNode(b);
+      if (!va && !vb) continue;
+      const self = va ? a : b;
+      const other = va ? b : a;
+      const vs = va || vb;
+      const x1 = this.posX(vs, this.localOf(self, vs));
+      const y1 = this.heightY(self.height);
+      let x2;
+      if (vb && va) {
+        x2 = this.posX(vb, this.localOf(other, vb));
+      } else if (other.wall === vs.wallId) {
+        x2 = this.posX(vs, clamp(this.localOf(other, vs), 0, vs.len));
+      } else {
+        const mid = vs.baseX + vs.w / 2;
+        x2 = x1 < mid ? vs.baseX : vs.baseX + vs.w;
+      }
+      const y2 = this.heightY(other.height);
       const path = el('path', {
         d: `M ${x1} ${y1} Q ${(x1 + x2) / 2} ${Math.max(y1, y2) + 24} ${x2} ${y2}`,
         fill: 'none', stroke: '#a06cd5', 'stroke-width': 2, 'stroke-dasharray': '5 4',
@@ -343,11 +515,11 @@ export class WallFaceDialog {
     }
   }
 
-  renderNodes() {
-    for (const node of this.nodesOnFace()) {
+  renderNodes(v) {
+    for (const node of this.nodesOnView(v)) {
       if (node.type === 'terminal') continue;
       if (node.deviceType === 'breakerBox') continue; // 强电箱由 renderBreakerBox 单独绘制
-      const x = this.posX(this.localOf(node)), y = this.heightY(node.height);
+      const x = this.posX(v, this.localOf(node, v)), y = this.heightY(node.height);
       const isSel = this.selectedNodeId === node.id;
       const cIdx = this.circuits.nodeCircuit.get(node.id);
       const cColor = cIdx != null ? this.circuits.circuits[cIdx].color : '#666';
@@ -401,16 +573,37 @@ export class WallFaceDialog {
     }
   }
 
+  // ---------- 切换当前墙 ----------
+  // 把某个视图（通常是相邻墙）设为当前编辑墙：保留工具与模式，
+  // 清除选择/未完成连线/拖动，重新计算左右邻墙并把新当前墙居中
+  activateView(v) {
+    if (!v || (v.wallId === this.wallId && v.face === this.face && sameSeg(v.seg, this.seg))) return;
+    this.wallId = v.wallId;
+    this.face = v.face;
+    this.seg = v.seg ? { id: v.seg.id, wallId: v.seg.wallId, index: v.seg.index, t0: v.seg.t0, t1: v.seg.t1 } : null;
+    this.selectedNodeId = null;
+    this.selectedWireId = null;
+    this.wirePending = null;
+    this.linkPending = null;
+    this.dragging = null;
+    this.snapGuideH = null;
+    this._centerPending = true;
+    if (this.cbs.onSelect) this.cbs.onSelect(null); // 清掉旧墙上的全局选中
+    this.render();
+  }
+
   // ---------- 交互 ----------
   onNodeMouseDown(e, nodeId) {
     e.stopPropagation();
+    const node = this.data.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const view = this.views ? this.viewOfNode(node) : null;
     if (this.mode !== 'edit') {
       this.selectedNodeId = nodeId;
       if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: nodeId });
       this.render();
       return;
     }
-    const node = this.data.nodes.find(n => n.id === nodeId);
     if (this.tool === 'remove') {
       if (node.type === 'terminal') return;
       this.deleteNode(nodeId);
@@ -421,14 +614,12 @@ export class WallFaceDialog {
         this.wirePending = nodeId;
         this.renderInfo();
       } else if (this.wirePending !== nodeId) {
-        // 创建电线
         const a = this.data.nodes.find(n => n.id === this.wirePending);
-        const b = node;
-        if (a.wall === b.wall && a.face === b.face) {
-          this.data.wires.push(createWire(a.id, b.id));
+        const err = this.wirePairError(a, node);
+        if (err) {
+          this.cbs.onNotify && this.cbs.onNotify(err);
         } else {
-          // 跨面：自动建立 link + 两段线？简化为：不同面时提示需同面
-          this.cbs.onNotify && this.cbs.onNotify('电线两端必须在同一墙面的同一面，跨面请用「穿墙连通」端点');
+          this.data.wires.push(createWire(a.id, node.id));
         }
         this.wirePending = null;
         this.changed();
@@ -436,16 +627,40 @@ export class WallFaceDialog {
       return;
     }
     if (this.tool === 'link') {
+      if (view && view.role !== 'active') {
+        this.cbs.onNotify && this.cbs.onNotify('穿墙连通请在当前墙面操作（先点标题「设为当前墙」）');
+        return;
+      }
       this.linkPending = nodeId;
       this.renderInfo();
       return;
     }
-    // select：开始拖动
+    // select：选中并开始拖动（仅当前墙可拖动）
     this.selectedNodeId = nodeId;
     this.selectedWireId = null;
     if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: nodeId });
-    this.dragging = { nodeId, moved: false };
+    if (view && view.role !== 'active') {
+      this.dragging = null;
+      this.cbs.onNotify && this.cbs.onNotify('相邻墙面为只读，点击标题「设为当前墙」后可编辑');
+    } else {
+      this.dragging = { nodeId, moved: false };
+    }
     this.renderInfo();
+  }
+
+  // 校验一对节点能否创建电线；返回错误消息或 null
+  wirePairError(a, b) {
+    if (!a || !b) return '端点不存在';
+    const va = this.viewOfNode(a), vb = this.viewOfNode(b);
+    if (!va || !vb) return '电线两端必须都在当前展开的墙面内';
+    if (va === vb) {
+      if (va.role !== 'active') return '相邻墙内部连线请先把该墙设为当前墙';
+      return null; // 当前墙同面内
+    }
+    // 跨面板：必须一端是当前墙，另一端是其左右邻墙
+    const hasActive = va.role === 'active' || vb.role === 'active';
+    if (!hasActive) return '只能连接当前墙与相邻墙面（不能绕过当前墙连左右邻墙）';
+    return null;
   }
 
   onSvgMouseDown(e) {
@@ -453,13 +668,18 @@ export class WallFaceDialog {
     const pt = this.svgPoint(e);
     if (this.tool === 'turn' || this.tool === 'split' ||
         this.tool === 'socket' || this.tool === 'switch' || this.tool === 'light') {
-      const local = clamp(this.xPos(pt.x), 0, this.view.len);
-      const rawH = clamp(this.yHeight(pt.y), 0, this.view.h);
-      const snapped = this.snapHeight(rawH, e.altKey);
+      // 只能在当前墙面板内放置设备
+      const av = this.activeView();
+      if (!av) return;
+      if (pt.x < av.baseX || pt.x > av.baseX + av.w ||
+          pt.y < this.heightY(av.h) || pt.y > this.floorY) return;
+      const local = clamp(this.xPos(av, pt.x), 0, av.len);
+      const rawH = clamp(this.yHeight(pt.y), 0, av.h);
+      const snapped = this.snapHeight(rawH, e.altKey, av);
       this.snapGuideH = snapped !== rawH ? snapped : null;
       const height = snapped;
       const type = ['socket', 'switch', 'light'].includes(this.tool) ? 'device' : this.tool;
-      const node = createNode(type, this.wallId, this.face, round4(this.tOf(local)), round2(height), this.tool);
+      const node = createNode(type, this.wallId, this.face, round4(this.tOf(local, av)), round2(height), this.tool);
       this.data.nodes.push(node);
       this.selectedNodeId = node.id;
       this.changed();
@@ -474,10 +694,12 @@ export class WallFaceDialog {
     if (!this.dragging) return;
     const node = this.data.nodes.find(n => n.id === this.dragging.nodeId);
     if (!node || node.type === 'terminal') return;
+    const av = this.activeView();
+    if (!av) return;
     const pt = this.svgPoint(e);
-    node.pos = round4(this.tOf(clamp(this.xPos(pt.x), 0, this.view.len)));
-    const rawH = clamp(this.yHeight(pt.y), 0, this.view.h);
-    const snapped = this.snapHeight(rawH, e.altKey);
+    node.pos = round4(this.tOf(clamp(this.xPos(av, pt.x), 0, av.len), av));
+    const rawH = clamp(this.yHeight(pt.y), 0, av.h);
+    const snapped = this.snapHeight(rawH, e.altKey, av);
     this.snapGuideH = snapped !== rawH ? snapped : null;
     node.height = round2(snapped);
     this.dragging.moved = true;
@@ -494,17 +716,21 @@ export class WallFaceDialog {
 
   onSvgHover(e) {
     if (this.mode !== 'edit') return;
-    const pt = this.svgPoint(e);
     if (['turn', 'split', 'socket', 'switch', 'light'].includes(this.tool)) {
-      this.showPreview(pt, e.altKey);
+      this.showPreview(this.svgPoint(e), e.altKey);
     }
   }
 
   showPreview(pt, altKey) {
     const old = this.svg.querySelector('.preview');
     if (old) old.remove();
-    const x = this.posX(clamp(this.xPos(pt.x), 0, this.view.len));
-    const y = this.heightY(this.snapHeight(clamp(this.yHeight(pt.y), 0, this.view.h), altKey));
+    const av = this.activeView();
+    if (!av) return;
+    // 仅在当前墙面板范围内显示放置预览
+    if (pt.x < av.baseX || pt.x > av.baseX + av.w ||
+        pt.y < this.heightY(av.h) || pt.y > this.floorY) return;
+    const x = this.posX(av, clamp(this.xPos(av, pt.x), 0, av.len));
+    const y = this.heightY(this.snapHeight(clamp(this.yHeight(pt.y), 0, av.h), altKey, av));
     this.svg.appendChild(el('circle', { cx: x, cy: y, r: 8, fill: 'none', stroke: '#4a90d9', 'stroke-dasharray': '3 3', class: 'preview', 'pointer-events': 'none' }));
   }
 
@@ -524,6 +750,10 @@ export class WallFaceDialog {
   deleteNode(nodeId) {
     const node = this.data.nodes.find(n => n.id === nodeId);
     if (!node || node.type === 'terminal') return;
+    if (!this.isActiveNode(node)) {
+      this.cbs.onNotify && this.cbs.onNotify('只能删除当前墙面的设备（先点标题「设为当前墙」）');
+      return;
+    }
     if (node.deviceType === 'breakerBox') {
       if (this.cbs.onNotify) this.cbs.onNotify('强电箱不能删除');
       return;
@@ -543,19 +773,36 @@ export class WallFaceDialog {
   }
 
   // ---------- 右侧信息 ----------
+  heightGuides(v) {
+    const g = [];
+    for (let k = 1; k < HEIGHT_SEGMENTS; k++) g.push(v.h * k / HEIGHT_SEGMENTS);
+    return g;
+  }
+  // 靠近参考线（Y_SNAP_PX 屏幕像素内）则吸附到线上；altKey 禁用
+  snapHeight(height, altKey, v) {
+    if (altKey) return height;
+    const r = Y_SNAP_PX / this.scale;
+    let best = null, bd = r;
+    for (const g of this.heightGuides(v || this.currentView())) {
+      const d = Math.abs(height - g);
+      if (d <= bd) { bd = d; best = g; }
+    }
+    return best == null ? height : best;
+  }
+
   renderInfo() {
     this.infoEl.innerHTML = '';
     if (!this.data) return;
     const toolHints = {
-      select: '拖动节点可调整其沿墙位置与高度；靠近横向参考线时高度自动吸附（按住 Alt 禁用吸附）。',
-      wire: this.wirePending ? '已选第一个端点，点击第二个端点完成连线。' : '依次点击两个端点/设备来连接电线。',
-      turn: '点击墙面放置转弯端点。',
-      split: '点击墙面放置分线端点。',
-      socket: '点击墙面放置插座。',
-      switch: '点击墙面放置开关。',
-      light: '点击墙面放置灯具。',
-      remove: '点击节点/电线/连通线进行删除。',
-      link: this.linkPending ? '点击下方列表中的候选节点完成连通。' : '点击一个端点，选择要连通的另一端点（跨墙两面或转角相邻墙）。',
+      select: '拖动节点可调整其沿墙位置与高度；靠近横向参考线时高度自动吸附（按住 Alt 禁用吸附）。相邻墙为只读。',
+      wire: this.wirePending ? '已选第一个端点，点击第二个端点完成连线。' : '依次点击两个端点/设备连接电线：支持当前墙内，以及当前墙与左右相邻墙之间的跨墙电线。',
+      turn: '点击当前墙面放置转弯端点。',
+      split: '点击当前墙面放置分线端点。',
+      socket: '点击当前墙面放置插座。',
+      switch: '点击当前墙面放置开关。',
+      light: '点击当前墙面放置灯具。',
+      remove: '点击节点/电线/连通线进行删除（仅限当前墙面）。',
+      link: this.linkPending ? '点击下方列表中的候选节点完成连通。' : '点击一个端点，选择要连通的另一端点（0.4m 内就近连通，含跨墙两面）；跨墙走远线请用「➰ 连线」。',
     };
     const p = document.createElement('p');
     p.className = 'placeholder';
@@ -579,6 +826,17 @@ export class WallFaceDialog {
       h.textContent = name;
       this.infoEl.appendChild(h);
 
+      const view = this.views ? this.viewOfNode(node) : null;
+      const readOnly = !!(view && view.role !== 'active');
+      const v = view || this.currentView();
+
+      if (readOnly) {
+        const p2 = document.createElement('p');
+        p2.className = 'placeholder';
+        p2.textContent = `位于相邻墙（墙 ${node.wall} · ${node.face === 0 ? 'A' : 'B'}面），为只读。点击该面板上「设为当前墙」后可编辑。`;
+        this.infoEl.appendChild(p2);
+      }
+
       const mkInput = (label, value, onch) => {
         const row = document.createElement('div');
         row.style.marginBottom = '6px';
@@ -587,13 +845,16 @@ export class WallFaceDialog {
         lab.textContent = label;
         const input = document.createElement('input');
         input.type = 'number'; input.step = '0.05'; input.value = value;
+        input.disabled = readOnly;
         input.style.cssText = 'width:100%;padding:3px 6px;border:1px solid #bbb;border-radius:4px;';
         input.addEventListener('change', () => { onch(parseFloat(input.value) || 0); this.changed(); });
         row.appendChild(lab); row.appendChild(input);
         this.infoEl.appendChild(row);
       };
-      mkInput('沿墙位置 (m)', round2(this.localOf(node)), v => { node.pos = round4(this.tOf(clamp(v, 0, this.view.len))); });
-      mkInput('离地高度 (m)', node.height, v => { node.height = clamp(v, 0, this.view.h); });
+      mkInput('沿墙位置 (m)', round2(this.localOf(node, v)), v2 => {
+        node.pos = round4(this.tOf(clamp(v2, 0, v.len), v));
+      });
+      mkInput('离地高度 (m)', node.height, v2 => { node.height = clamp(v2, 0, v.h); });
 
       const labRow = document.createElement('div');
       labRow.style.marginBottom = '6px';
@@ -603,6 +864,7 @@ export class WallFaceDialog {
       const input = document.createElement('input');
       input.type = 'text'; input.value = node.label || '';
       input.placeholder = '标注文字';
+      input.disabled = readOnly;
       input.style.cssText = 'width:100%;padding:3px 6px;border:1px solid #bbb;border-radius:4px;';
       input.addEventListener('change', () => { node.label = input.value; this.changed(); });
       labRow.appendChild(lab); labRow.appendChild(input);
@@ -653,14 +915,17 @@ export class WallFaceDialog {
         cands.push({ node: n, d, desc: linkDesc(this.data, n) });
       }
     }
-    // 跨墙另一面：自动镜像（pos 为 0~1，按米比较需换算）
+    // 跨墙另一面：自动镜像（pos 为 0~1，按米比较需换算）。镜像节点属于"新增节点"，
+    // 只允许在当前活动墙段创建，不允许借邻墙端点把节点加到非活动墙
+    const selfView = this.views ? this.viewOfNode(self) : null;
+    const selfActive = !selfView || selfView.role === 'active';
     const selfWall = walls.get(self.wall);
     const posEps = selfWall ? 0.01 / wallLen(selfWall) : 0.01;
     const mirror = this.data.nodes.find(n =>
       n.wall === self.wall && n.face !== self.face &&
       Math.abs(n.pos - self.pos) < posEps && Math.abs(n.height - self.height) < 0.01);
-    if (!mirror) {
-      cands.unshift({ node: null, mirror: true, desc: `在 ${this.wall().id} 墙 ${self.face === 0 ? 'B' : 'A'} 面创建对应节点` });
+    if (!mirror && selfActive) {
+      cands.unshift({ node: null, mirror: true, desc: `在 ${self.wall} 墙 ${self.face === 0 ? 'B' : 'A'} 面创建对应节点` });
     }
     const h = document.createElement('h4');
     h.style.margin = '6px 0';
@@ -680,6 +945,10 @@ export class WallFaceDialog {
       btn.textContent = c.mirror ? '⇄ ' + c.desc : `⇄ ${c.desc}（相距 ${c.d.toFixed(2)}m）`;
       btn.addEventListener('click', () => {
         if (c.mirror) {
+          if (!this.isActiveNode(self)) {
+            this.cbs.onNotify && this.cbs.onNotify('只能在当前墙面创建镜像节点');
+            return;
+          }
           const nn = createNode('turn', self.wall, self.face === 0 ? 1 : 0, self.pos, self.height);
           this.data.nodes.push(nn);
           addLink(this.data, self.id, nn.id);
@@ -692,6 +961,13 @@ export class WallFaceDialog {
       this.infoEl.appendChild(btn);
     }
   }
+}
+
+function sameSeg(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.wallId === b.wallId && a.index === b.index &&
+    Math.abs(a.t0 - b.t0) < 1e-9 && Math.abs(a.t1 - b.t1) < 1e-9;
 }
 
 function linkDesc(data, node) {
