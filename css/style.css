@@ -152,3 +152,10 @@ svg .wire-hit:hover + .wire-line { stroke-width: 4; }
   background: rgba(40,40,45,0.92); color: #fff; padding: 8px 18px;
   border-radius: 6px; font-size: 13px; z-index: 200;
 }
+
+/* 悬停电气设备时跟随指针的名称提示 */
+.node-tooltip {
+  position: fixed; z-index: 200; display: none; pointer-events: none;
+  background: rgba(40,40,45,0.92); color: #fff;
+  padding: 3px 10px; border-radius: 4px; font-size: 12px; white-space: nowrap;
+}

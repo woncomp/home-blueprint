@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight } from './model.js';
+import { DEVICE_TYPES, createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -81,6 +81,7 @@ function setMode(mode) {
     // 进入户型编辑：禁用 3D 控制器，切换到 2D 顶视图并自动适应
     scene3d.controls.cancelPan();
     scene3d.controls.enabled = false;
+    hideNodeTooltip();
     app.selection = null;
     scene3d.setSelection(null);
     canvas.classList.add('hidden');
@@ -263,6 +264,7 @@ let mouseDownPos = null;
 canvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return; // 中键用于平移视点、右键无点击行为，均不进入点击/拖拽判定
   mouseDownPos = { x: e.clientX, y: e.clientY };
+  hideNodeTooltip(); // 拖拽旋转/拖动强电箱期间不残留 tooltip
   // 强电箱拖动（特殊设备节点）
   if (app.mode === 'edit' && app.selection && app.selection.kind === 'node') {
     const selNode = app.data.nodes.find(n => n.id === app.selection.id);
@@ -292,10 +294,14 @@ window.addEventListener('mousemove', e => {
   } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
     const hit = scene3d.pick(e.clientX, e.clientY);
     scene3d.setHover(hit && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
+    // 悬停到电气设备时在指针旁显示名称；端子/端点等非设备节点不显示
+    const node = hit && hit.kind === 'node' ? app.data.nodes.find(n => n.id === hit.id) : null;
+    if (node && node.type === 'device') showNodeTooltip(node, e.clientX, e.clientY);
+    else hideNodeTooltip();
   }
 });
 
-canvas.addEventListener('mouseleave', () => scene3d.setHover(null));
+canvas.addEventListener('mouseleave', () => { scene3d.setHover(null); hideNodeTooltip(); });
 
 window.addEventListener('mouseup', e => {
   if (app.draggingBox) {
@@ -318,6 +324,7 @@ function handleCanvasClick(e) {
   // 未被接触的一面整面一个范围，可整墙展开）
   if (hit && hit.kind === 'wall') {
     scene3d.setHover(null);
+    hideNodeTooltip();
     wallface.open(app.data, hit.id, hit.face, app.mode, hit.seg);
     return;
   }
@@ -325,6 +332,32 @@ function handleCanvasClick(e) {
   scene3d.setSelection(hit);
   refreshPanel();
   refreshToolbar();
+}
+
+// ---------- 设备悬停 tooltip ----------
+// 单例元素，随 mousemove 更新位置；pointer-events:none 不干扰 3D 拾取
+const nodeTooltip = document.createElement('div');
+nodeTooltip.className = 'node-tooltip';
+document.body.appendChild(nodeTooltip);
+
+function showNodeTooltip(node, x, y) {
+  const type = DEVICE_TYPES[node.deviceType] || {};
+  // 强电箱 label 固定为“强电箱”，避免与类型名重复
+  const text = node.deviceType === 'breakerBox'
+    ? type.name
+    : type.name + (node.label ? ' · ' + node.label : '');
+  nodeTooltip.textContent = text;
+  nodeTooltip.style.display = 'block';
+  // 默认显示在指针右下方，靠近屏幕右/下边缘时翻转到左/上方
+  const w = nodeTooltip.offsetWidth, h = nodeTooltip.offsetHeight;
+  const flipX = x + 14 + w > window.innerWidth;
+  const flipY = y + 14 + h > window.innerHeight;
+  nodeTooltip.style.left = (flipX ? x - w - 14 : x + 14) + 'px';
+  nodeTooltip.style.top = (flipY ? y - h - 14 : y + 14) + 'px';
+}
+
+function hideNodeTooltip() {
+  nodeTooltip.style.display = 'none';
 }
 
 // ---------- Toast ----------
