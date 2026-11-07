@@ -166,8 +166,8 @@ export class Scene3D {
       let cx = 0, cz = 0;
       for (const [x, z] of room.points) { cx += x; cz += z; }
       cx /= room.points.length; cz /= room.points.length;
-      const label = makeTextSprite(names[room.key] || `房间${i + 1}`, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
-      label.position.set(cx, 1.6, cz);
+      const label = makeFloorTextMesh(names[room.key] || `房间${i + 1}`, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
+      label.position.set(cx, 0.02, cz);
       this.labelGroup.add(label);
     });
   }
@@ -550,6 +550,27 @@ export function makeTextSprite(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w =
   sprite.scale.set(scale * w / h, scale, 1);
   sprite.renderOrder = 10;
   return sprite;
+}
+
+// 平铺在地面的文字贴片：贴地、法线朝上，文字上方向指向 -Z（与平面图阅读方向一致）
+export function makeFloorTextMesh(text, color = '#fff', bg = 'rgba(0,0,0,0.6)', w = 256, h = 56, scale = 0.9) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = bg;
+  roundRect(ctx, 2, 2, w - 4, h - 4, 10);
+  ctx.fill();
+  ctx.font = `${Math.floor(h * 0.5)}px "Microsoft YaHei", sans-serif`;
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, w / 2, h / 2 + 1);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(scale * w / h, scale), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.renderOrder = 1;
+  return mesh;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
