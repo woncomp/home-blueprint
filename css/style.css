@@ -25,6 +25,11 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 .tool-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .tool-btn.active-tool { background: #4a90d9; color: #fff; border-color: #4a90d9; }
 .hint { color: #aaa; font-size: 12px; }
+.toolbar-check {
+  display: flex; align-items: center; gap: 5px;
+  color: #ccc; font-size: 13px; cursor: pointer; user-select: none;
+}
+.toolbar-check input { cursor: pointer; accent-color: #4a90d9; }
 .hidden { display: none !important; }
 
 #canvas-container { flex: 1; position: relative; min-height: 0; }

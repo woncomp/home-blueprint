@@ -48,6 +48,7 @@ export class Scene3D {
     this.selected = null;        // { kind, id }
     this.highlightCircuit = null; // 线路索引或 null
     this.mode = 'view';
+    this.roomLabelFloor = true; // 房间标签贴地平面；false 时用始终面向相机的悬浮 Sprite
     this._pickables = [];
 
     window.addEventListener('resize', () => this.resize());
@@ -65,6 +66,13 @@ export class Scene3D {
 
   setMode(mode) {
     this.mode = mode;
+    this.rebuild();
+  }
+
+  // 房间标签显示方式：true 贴地 / false 悬浮 billboard
+  setRoomLabelMode(floor) {
+    if (this.roomLabelFloor === floor) return;
+    this.roomLabelFloor = floor;
     this.rebuild();
   }
 
@@ -166,8 +174,15 @@ export class Scene3D {
       let cx = 0, cz = 0;
       for (const [x, z] of room.points) { cx += x; cz += z; }
       cx /= room.points.length; cz /= room.points.length;
-      const label = makeFloorTextMesh(names[room.key] || `房间${i + 1}`, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
-      label.position.set(cx, 0.02, cz);
+      const name = names[room.key] || `房间${i + 1}`;
+      let label;
+      if (this.roomLabelFloor) {
+        label = makeFloorTextMesh(name, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
+        label.position.set(cx, 0.02, cz);
+      } else {
+        label = makeTextSprite(name, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
+        label.position.set(cx, 0.3, cz); // 略高于地面悬浮（标签高 0.5，底边约离地 5cm）
+      }
       this.labelGroup.add(label);
     });
   }

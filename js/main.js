@@ -129,6 +129,9 @@ document.getElementById('plan-tool-door').addEventListener('click', () => plan2d
 document.getElementById('plan-tool-delete').addEventListener('click', () => plan2d.setTool('delete'));
 document.getElementById('plan-fit').addEventListener('click', () => plan2d.fitView());
 document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
+document.getElementById('chk-room-label-floor').addEventListener('change', e => {
+  scene3d.setRoomLabelMode(e.target.checked);
+});
 document.getElementById('btn-export').addEventListener('click', () => {
   syncTerminals();
   exportJson(app.data);
