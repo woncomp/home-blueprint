@@ -22,6 +22,12 @@ export const NODE_TYPE_NAMES = {
 // 强电箱统一尺寸（米）：宽(沿墙) × 高 × 深(出墙)，各处渲染必须引用此常量
 export const BREAKER_BOX_SIZE = { w: 0.5, h: 0.7, d: 0.14 };
 
+// 端子高度：每条线路占 1 权重，两端各预留 0.5 权重（总 n+1 权重均分箱高），返回第 i 条（0 起）端子高度
+export function breakerTerminalHeight(i, n, boxCenterHeight) {
+  const unit = BREAKER_BOX_SIZE.h / (n + 1);
+  return boxCenterHeight - BREAKER_BOX_SIZE.h / 2 + (i + 1) * unit;
+}
+
 let idCounter = 1;
 export function genId(prefix) {
   return `${prefix}${Date.now().toString(36)}_${(idCounter++).toString(36)}`;

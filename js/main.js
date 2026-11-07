@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, BREAKER_BOX_SIZE } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -238,19 +238,18 @@ function deleteDoorById(id) {
 }
 
 // ---------- 强电箱端子同步 ----------
-// 端子高度按断路器数量在箱体垂直范围内均分（上下各留 0.06m 边距），避免出线重叠
+// 端子高度按断路器数量在箱体垂直范围内均分：每条线路占 1 权重，两端各预留 0.5 权重，避免出线重叠
 function syncTerminals() {
   const box = findBreakerBox(app.data);
   if (!box) return;
   const n = box.breakers.length;
-  const span = BREAKER_BOX_SIZE.h / 2 - 0.06;
   box.breakers.forEach((br, i) => {
     const node = app.data.nodes.find(x => x.id === br.terminal);
     if (!node) return;
     node.wall = box.wall;
     node.face = box.face;
     node.pos = box.pos;
-    node.height = n <= 1 ? box.height : box.height - span + 2 * span * (i / (n - 1));
+    node.height = breakerTerminalHeight(i, n, box.height);
   });
 }
 
