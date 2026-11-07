@@ -143,6 +143,7 @@ document.getElementById('file-input').addEventListener('change', async e => {
   try {
     const data = await importJsonFile(file);
     app.data = data;
+    syncTerminals();
     app.selection = null;
     scene3d.setSelection(null);
     plan2d.setSelection(null);
@@ -354,6 +355,7 @@ window.__wallface = wallface;
 
 (async function start() {
   app.data = await loadDefaultData();
+  syncTerminals();
   scene3d.setData(app.data);
   setMode('view');
 
