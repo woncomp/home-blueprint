@@ -120,9 +120,6 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 #wallface-body { flex: 1; display: flex; min-height: 0; }
 #wallface-svg { flex: 1; background: #fafafa; cursor: crosshair; }
 #wallface-side { width: 220px; border-left: 1px solid #ddd; padding: 10px; overflow-y: auto; }
-#wallface-face-switch { display: flex; margin-bottom: 10px; border-radius: 5px; overflow: hidden; border: 1px solid #ccc; }
-.face-btn { flex: 1; padding: 6px; border: none; background: #eee; cursor: pointer; font-size: 13px; }
-.face-btn.active { background: #4a90d9; color: #fff; }
 #wallface-info { font-size: 13px; color: #333; line-height: 1.7; }
 
 svg .node { cursor: pointer; }

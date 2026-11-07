@@ -175,7 +175,7 @@ export function nodeWorldPos(node, wallsById) {
   const wall = wallsById.get(node.wall);
   if (!wall) return null;
   const [dx, dz] = wallDir(wall);
-  const off = (wall.thickness / 2) * (node.face === 0 ? 1 : -1);
+  const off = (wall.thickness || 0.2) / 2;
   const [nx, nz] = wallNormal(wall, node.face);
   return [
     wall.start[0] + dx * node.pos + nx * off,

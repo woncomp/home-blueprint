@@ -14,18 +14,15 @@ export class WallFaceDialog {
     this.svg = document.getElementById('wallface-svg');
     this.titleEl = document.getElementById('wallface-title');
     this.infoEl = document.getElementById('wallface-info');
-    this.btnA = document.getElementById('btn-face-a');
-    this.btnB = document.getElementById('btn-face-b');
     this.tool = 'select';
     this.wirePending = null;
     this.linkPending = null;
     this.selectedNodeId = null;
+    this.selectedWireId = null;
     this.dragging = null;
 
     document.getElementById('wallface-close').addEventListener('click', () => this.close());
     document.getElementById('wallface-backdrop').addEventListener('click', () => this.close());
-    this.btnA.addEventListener('click', () => this.setFace(0));
-    this.btnB.addEventListener('click', () => this.setFace(1));
     document.querySelectorAll('#wallface-tools .wf-tool').forEach(btn => {
       btn.addEventListener('click', () => {
         this.setTool(btn.dataset.wftool);
@@ -43,6 +40,9 @@ export class WallFaceDialog {
     this.wallId = wallId;
     this.face = face;
     this.mode = mode;
+    this.selectedNodeId = null;
+    this.selectedWireId = null;
+    this.dragging = null;
     this.dialog.classList.remove('hidden');
     this.setTool('select');
     this.render();
@@ -55,14 +55,6 @@ export class WallFaceDialog {
   }
 
   isOpen() { return !this.dialog.classList.contains('hidden'); }
-
-  setFace(face) {
-    this.face = face;
-    this.wirePending = null;
-    this.linkPending = null;
-    this.selectedNodeId = null;
-    this.render();
-  }
 
   setTool(tool) {
     this.tool = tool;
@@ -109,8 +101,6 @@ export class WallFaceDialog {
     this.circuits = computeCircuits(this.data);
     const wall = this.wall();
     this.titleEl.textContent = `墙 ${wall.id} · ${this.face === 0 ? 'A 面' : 'B 面'}（长 ${this.view.len.toFixed(2)}m × 高 ${this.view.h}m）`;
-    this.btnA.classList.toggle('active', this.face === 0);
-    this.btnB.classList.toggle('active', this.face === 1);
     this.svg.innerHTML = '';
     this.svg.setAttribute('viewBox', `0 0 ${this.svg.clientWidth || 800} ${this.svg.clientHeight || 500}`);
 
