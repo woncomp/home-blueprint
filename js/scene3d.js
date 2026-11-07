@@ -5,6 +5,7 @@ import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
 } from './model.js';
+import { buildWallShell, locateWall } from './wallgeometry.js';
 
 const ROOM_COLORS = ['#e8f0e3', '#e3ecf5', '#f5eee3', '#f0e3f5', '#e3f5f0', '#f5e3e8'];
 
@@ -167,44 +168,19 @@ export class Scene3D {
   }
 
   // ---------- 墙 ----------
+  // 全屋墙面一体壳网格（拓扑干净：无重叠、无内部隐藏面、无贴地底面）；
+  // 单一 mesh 不带 wall id，拾取经 locateWall 反解
   buildWalls() {
-    const footprints = computeWallFootprints(this.data.walls);
-    for (const wall of this.data.walls) {
-      const h = wall.height || 2.8;
-      const fp = footprints.get(wall.id);
-      if (!fp || fp.length < 3) continue;
-      const doors = (this.data.doors || []).filter(d => d.wall === wall.id);
-      const mat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, transparent: true, opacity: 0.88 });
-      if (!doors.length) {
-        const mesh = new THREE.Mesh(extrudeFootprint(fp, h), mat);
-        mesh.userData = { kind: 'wall', id: wall.id };
-        this.staticGroup.add(mesh);
-        this._pickables.push(mesh);
-        continue;
-      }
-      // 有门：下段（0 → 门高）带门洞 holes，上段为完整门楣（门高 → 墙高）
-      const dh = Math.min(...doors.map(d => d.height || 2.0), h);
-      const shape = footprintShape(fp);
-      for (const door of doors) {
-        const hole = doorHoleRect(wall, door, fp);
-        if (hole.length >= 3 && Math.abs(signedArea2(hole)) > 1e-6) {
-          shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, z))));
-        }
-      }
-      const lower = new THREE.ExtrudeGeometry(shape, { depth: dh, bevelEnabled: false });
-      lower.rotateX(Math.PI / 2);
-      lower.translate(0, dh, 0);
-      const meshL = new THREE.Mesh(lower, mat);
-      meshL.userData = { kind: 'wall', id: wall.id };
-      this.staticGroup.add(meshL);
-      this._pickables.push(meshL);
-      const upper = extrudeFootprint(fp, h - dh);
-      upper.translate(0, dh, 0);
-      const meshU = new THREE.Mesh(upper, mat.clone());
-      meshU.userData = { kind: 'wall', id: wall.id };
-      this.staticGroup.add(meshU);
-      this._pickables.push(meshU);
-    }
+    const { positions, normals } = buildWallShell(this.data.walls, this.data.doors || []);
+    if (!positions.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    const mat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, transparent: true, opacity: 0.88 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData = { kind: 'wall' };
+    this.staticGroup.add(mesh);
+    this._pickables.push(mesh);
   }
 
   // ---------- 门（门框 + 半开门扇，不参与拾取） ----------
@@ -478,11 +454,12 @@ export class Scene3D {
       const ud = hit.object.userData;
       if (!ud || !ud.kind) continue;
       const result = { kind: ud.kind, id: ud.id };
-      if (ud.kind === 'wall' && hit.face) {
-        const wall = this.wallsById().get(ud.id);
-        const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-        const [nx, nz] = wallNormal(wall, 0);
-        result.face = (n.x * nx + n.z * nz) > 0 ? 0 : 1;
+      if (ud.kind === 'wall') {
+        // 墙壳是单一 mesh：由命中点反解所在墙与面（顶盖/门楣底面命中同样稳健）
+        const loc = locateWall(this.data.walls, [hit.point.x, hit.point.y, hit.point.z]);
+        if (!loc) continue;
+        result.id = loc.wall.id;
+        result.face = loc.face;
       }
       if (ud.kind === 'room') {
         // 房间只用于点选命名，优先级放低：若后面还有更近的非房间命中则取后者
@@ -507,175 +484,6 @@ export class Scene3D {
     this.controls.tick(dt);
     this.renderer.render(this.scene, this.camera);
   }
-}
-
-// ---------- 墙体俯视轮廓（拐角直角对接、T 型平齐） ----------
-
-const JOIN_EPS = 0.01;                    // 端点吸附阈值（米）
-const MITER_MIN_SIN = Math.sin(Math.PI / 9); // 两墙接近共线时视为直墙延续
-
-function cross2(a, b) { return a[0] * b[1] - a[1] * b[0]; }
-
-function pointSegDist(p, a, b) {
-  const abx = b[0] - a[0], abz = b[1] - a[1];
-  const l2 = abx * abx + abz * abz;
-  if (l2 < 1e-12) return Math.hypot(p[0] - a[0], p[1] - a[1]);
-  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * abz) / l2));
-  return Math.hypot(p[0] - (a[0] + abx * t), p[1] - (a[1] + abz * t));
-}
-
-function signedArea2(pts) {
-  let a = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const [x1, z1] = pts[i], [x2, z2] = pts[(i + 1) % pts.length];
-    a += x1 * z2 - x2 * z1;
-  }
-  return a / 2;
-}
-
-// 端部回退 back 后的平切角点（u 指向墙外）
-function trimCorners(cur, P, u, back) {
-  const cx = P[0] - u[0] * back, cz = P[1] - u[1] * back;
-  return [
-    [cx + cur.nu[0] * cur.s, cz + cur.nu[1] * cur.s],
-    [cx - cur.nu[0] * cur.s, cz - cur.nu[1] * cur.s],
-  ];
-}
-
-// 计算某墙某端以「指向墙外方向 u」为基准的左/右角点
-function endCorners(cur, P, u, sharers, throughs) {
-  const leftBase = [P[0] + cur.nu[0] * cur.s, P[1] + cur.nu[1] * cur.s];
-  const rightBase = [P[0] - cur.nu[0] * cur.s, P[1] - cur.nu[1] * cur.s];
-
-  // 有共线的接续墙（直墙延续）→ 平切
-  const straight = sharers.some(sh => Math.abs(cross2(u, sh.v)) < MITER_MIN_SIN && u[0] * sh.v[0] + u[1] * sh.v[1] < 0);
-  if (straight) return [leftBase, rightBase];
-
-  if (sharers.length === 1) {
-    const { oth, v } = sharers[0];
-    if (Math.abs(cross2(u, v)) < MITER_MIN_SIN) return [leftBase, rightBase]; // 折叠尖角，平切
-    // 直角对接：id 较小的墙贯通（端部外延对方半厚，填满角部方块），
-    // 另一面墙回退对方半厚，端面平齐顶到贯通墙侧面
-    if (cur.w.id < oth.w.id) {
-      return [
-        [leftBase[0] + u[0] * oth.s, leftBase[1] + u[1] * oth.s],
-        [rightBase[0] + u[0] * oth.s, rightBase[1] + u[1] * oth.s],
-      ];
-    }
-    return trimCorners(cur, P, u, Math.min(oth.s, cur.len / 2));
-  }
-
-  if (sharers.length >= 2) {
-    // T 型（贯通墙为两段）或多墙交汇：回退平切，顶到对方墙面
-    const s2 = Math.max(...sharers.map(sh => sh.oth.s));
-    return trimCorners(cur, P, u, Math.min(s2, cur.len / 2));
-  }
-
-  if (throughs.length) {
-    // T 型头：端点落在另一墙内部，回退该墙半厚
-    const s2 = Math.max(...throughs.map(o => o.s));
-    return trimCorners(cur, P, u, Math.min(s2, cur.len / 2));
-  }
-
-  return [leftBase, rightBase]; // 自由端
-}
-
-// 返回 Map<wallId, [[x,z], ...]>：每面墙的俯视轮廓多边形（逆时针）
-function computeWallFootprints(walls) {
-  const info = walls.map(w => {
-    const len = wallLen(w);
-    const d = len > 1e-6 ? wallDir(w) : [1, 0];
-    return { w, len, d, s: (w.thickness || 0.2) / 2 };
-  });
-  const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < JOIN_EPS;
-
-  const result = new Map();
-  for (const cur of info) {
-    if (cur.len < 1e-6) continue;
-    const ends = [];
-    for (let e = 0; e < 2; e++) {
-      const P = e === 0 ? cur.w.start : cur.w.end;
-      const u = e === 0 ? [-cur.d[0], -cur.d[1]] : cur.d; // 指向墙外
-      cur.nu = [u[1], -u[0]];                             // 以 u 为基准的左法线
-      const sharers = [], throughs = [];
-      for (const oth of info) {
-        if (oth === cur || oth.len < 1e-6) continue;
-        const atStart = near(P, oth.w.start), atEnd = near(P, oth.w.end);
-        if (atStart || atEnd) {
-          const v = atStart ? oth.d : [-oth.d[0], -oth.d[1]]; // 沿对方墙指向节点外
-          sharers.push({ oth, v });
-        } else if (pointSegDist(P, oth.w.start, oth.w.end) < JOIN_EPS) {
-          throughs.push(oth);
-        }
-      }
-      const [leftU, rightU] = endCorners(cur, P, u, sharers, throughs);
-      // 统一换算成以 cur.d 为基准的左/右角：终点处一致，起点处左右互换
-      ends.push(e === 1 ? [leftU, rightU] : [rightU, leftU]);
-    }
-    let pts = [ends[0][0], ends[1][0], ends[1][1], ends[0][1]];
-    if (signedArea2(pts) < 0) pts = pts.reverse();
-    result.set(cur.w.id, pts);
-  }
-  return result;
-}
-
-// ---------- 门洞几何辅助 ----------
-
-// footprint（俯视轮廓，CCW）→ THREE.Shape
-function footprintShape(fp) {
-  const shape = new THREE.Shape();
-  fp.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z)));
-  shape.closePath();
-  return shape;
-}
-
-// footprint 拉伸为 y ∈ [0, depth] 的墙体网格几何
-function extrudeFootprint(fp, depth) {
-  const geo = new THREE.ExtrudeGeometry(footprintShape(fp), { depth, bevelEnabled: false });
-  geo.rotateX(Math.PI / 2); // Shape 在 XY 平面，转到 XZ；拉伸方向变为 -Y
-  geo.translate(0, depth, 0);
-  return geo;
-}
-
-// 门洞矩形（世界坐标，CW 序供 Shape.holes 使用）：中心线 [pos−w/2, pos+w/2] × 厚度方向 ±t/2
-function doorHoleRect(wall, door, fp) {
-  const t = wall.thickness || 0.2;
-  const [dx, dz] = wallDir(wall);
-  const [nx, nz] = [dz, -dx]; // 任一法向，两侧对称
-  const u0 = door.pos - door.width / 2, u1 = door.pos + door.width / 2;
-  const pt = (u, v) => [wall.start[0] + dx * u + nx * v, wall.start[1] + dz * u + nz * v];
-  // 先按墙面延伸少许，再与轮廓裁剪，保证门贴墙端时洞口与轮廓闭合
-  const ext = 0.02;
-  const rect = [pt(u0 - ext, -t / 2 - ext), pt(u1 + ext, -t / 2 - ext), pt(u1 + ext, t / 2 + ext), pt(u0 - ext, t / 2 + ext)];
-  return clipPolygon(rect, fp);
-}
-
-// Sutherland–Hodgman：凸裁剪多边形（CCW）裁剪任意多边形
-function clipPolygon(subject, clip) {
-  if (!clip.length) return [];
-  const inside = (p, a, b) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-12;
-  const intersect = (p, q, a, b) => {
-    const d1x = b[0] - a[0], d1z = b[1] - a[1];
-    const d2x = q[0] - p[0], d2z = q[1] - p[1];
-    const den = d1x * d2z - d1z * d2x;
-    if (Math.abs(den) < 1e-12) return q;
-    const t = ((p[0] - a[0]) * d2z - (p[1] - a[1]) * d2x) / den;
-    return [a[0] + d1x * t, a[1] + d1z * t];
-  };
-  let out = subject;
-  for (let i = 0; i < clip.length; i++) {
-    const a = clip[i], b = clip[(i + 1) % clip.length];
-    const input = out;
-    out = [];
-    for (let j = 0; j < input.length; j++) {
-      const p = input[j], q = input[(j + 1) % input.length];
-      const pin = inside(p, a, b), qin = inside(q, a, b);
-      if (pin) out.push(p);
-      if (pin !== qin) out.push(intersect(p, q, a, b));
-    }
-    if (!out.length) break;
-  }
-  return out;
 }
 
 function clearGroup(g) {
