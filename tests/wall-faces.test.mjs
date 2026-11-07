@@ -18,13 +18,14 @@ function assertClose(actual, expected) {
 for (const wall of walls) {
   for (const face of [0, 1]) {
     test(`${wall.id}: face ${face} positions nodes on its outward normal`, () => {
-      const pos = wallLen(wall) * 0.4;
-      const node = { wall: wall.id, face, pos, height: 1.25 };
+      const t01 = 0.4; // 沿墙 0~1 归一化坐标
+      const node = { wall: wall.id, face, pos: t01, height: 1.25 };
       const [x, y, z] = nodeWorldPos(node, new Map([[wall.id, wall]]));
       const [dx, dz] = wallDir(wall);
       const [nx, nz] = wallNormal(wall, face);
-      const offsetX = x - (wall.start[0] + dx * pos);
-      const offsetZ = z - (wall.start[1] + dz * pos);
+      const along = t01 * wallLen(wall);
+      const offsetX = x - (wall.start[0] + dx * along);
+      const offsetZ = z - (wall.start[1] + dz * along);
 
       assertClose(offsetX * nx + offsetZ * nz, wall.thickness / 2);
       assertClose(offsetX * dx + offsetZ * dz, 0);
@@ -34,7 +35,7 @@ for (const wall of walls) {
 
   test(`${wall.id}: corresponding A/B nodes are one wall thickness apart`, () => {
     const byId = new Map([[wall.id, wall]]);
-    const node = { wall: wall.id, pos: 1, height: 0.3 };
+    const node = { wall: wall.id, pos: 1, height: 0.3 }; // pos=1 → 墙终点端
     const a = nodeWorldPos({ ...node, face: 0 }, byId);
     const b = nodeWorldPos({ ...node, face: 1 }, byId);
 
@@ -46,7 +47,7 @@ for (const wall of walls) {
 test('missing wall thickness uses the same 0.2m default as the 3D wall', () => {
   const wall = { id: 'default', start: [0, 0], end: [4, 0] };
   const byId = new Map([[wall.id, wall]]);
-  const node = { wall: wall.id, pos: 2, height: 1 };
+  const node = { wall: wall.id, pos: 0.5, height: 1 }; // 0.5 × 4m = 墙中点 2m
 
   assert.deepEqual(nodeWorldPos({ ...node, face: 0 }, byId), [2, 1, -0.1]);
   assert.deepEqual(nodeWorldPos({ ...node, face: 1 }, byId), [2, 1, 0.1]);

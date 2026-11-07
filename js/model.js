@@ -29,7 +29,7 @@ export function genId(prefix) {
 
 export function createEmptyData() {
   return {
-    version: 1,
+    version: 2,
     walls: [],
     nodes: [],
     wires: [],
@@ -66,6 +66,8 @@ export function createWall(x1, z1, x2, z2) {
   };
 }
 
+// pos 为沿墙的 0~1 归一化坐标（0=墙起点端，1=墙终点端），与墙长无关；
+// 墙在电路编辑/预览中被派生拆分时，pos 始终相对于原始整墙
 export function createNode(type, wallId, face, pos, height, deviceType) {
   return {
     id: genId('n'),
@@ -84,6 +86,7 @@ export function createWire(from, to) {
 }
 
 // 强电箱是一种特殊设备：作为设备节点存放在 nodes 中，断路器挂在节点上
+// pos 同样为沿墙的 0~1 归一化坐标
 export function createBreakerBox(wallId, face, pos) {
   return {
     id: genId('bb'),
@@ -127,12 +130,27 @@ export function normalizeData(data) {
     const first = data.walls[0];
     const box = findBreakerBox(data);
     if (!box) {
-      data.nodes.push(createBreakerBox(first.id, 1, Math.round((wallLen(first) / 2) * 100) / 100));
+      data.nodes.push(createBreakerBox(first.id, 1, 0.5));
     } else if (!data.walls.some(w => w.id === box.wall)) {
       box.wall = first.id;
       box.face = 1;
-      box.pos = Math.round((wallLen(first) / 2) * 100) / 100;
+      box.pos = 0.5;
     }
+  }
+  // v1→v2（放在最后：顶层 breakerBox 迁移进来的 pos 还是米数，一并转换）：
+  // 节点 pos 从沿墙米数改为 0~1 归一化坐标（门保持米数不变）
+  if (data && typeof data.version === 'number' && data.version < 2) {
+    if (Array.isArray(data.walls) && Array.isArray(data.nodes)) {
+      const wallsById = new Map(data.walls.map(w => [w.id, w]));
+      for (const n of data.nodes) {
+        const w = wallsById.get(n.wall);
+        if (!w) continue;
+        const len = wallLen(w);
+        if (!(len > 0)) { n.pos = 0; continue; }
+        n.pos = Math.min(1, Math.max(0, Math.round((n.pos / len) * 10000) / 10000));
+      }
+    }
+    data.version = 2;
   }
   return data;
 }
@@ -173,17 +191,18 @@ export function wallNormal(wall, face) {
   return face === 0 ? [dz, -dx] : [-dz, dx];
 }
 
-// 节点在世界坐标中的位置（墙面上的点）
+// 节点在世界坐标中的位置（墙面上的点）；node.pos 为沿墙 0~1 归一化坐标
 export function nodeWorldPos(node, wallsById) {
   const wall = wallsById.get(node.wall);
   if (!wall) return null;
   const [dx, dz] = wallDir(wall);
+  const t = node.pos * wallLen(wall);
   const off = (wall.thickness || 0.2) / 2;
   const [nx, nz] = wallNormal(wall, node.face);
   return [
-    wall.start[0] + dx * node.pos + nx * off,
+    wall.start[0] + dx * t + nx * off,
     node.height,
-    wall.start[1] + dz * node.pos + nz * off,
+    wall.start[1] + dz * t + nz * off,
   ];
 }
 
@@ -252,7 +271,8 @@ export function detectRooms(walls) {
       const p1 = [rw.w.start[0] + dx * t1, rw.w.start[1] + dz * t1];
       const p2 = [rw.w.start[0] + dx * t2, rw.w.start[1] + dz * t2];
       const k1 = addV(p1[0], p1[1]), k2 = addV(p2[0], p2[1]);
-      const info = { a: k1, b: k2 };
+      // a→b 方向与墙 start→end 一致；t0/t1 为沿原始墙的 0~1 归一化坐标
+      const info = { a: k1, b: k2, wallId: rw.w.id, t0: t1 / len, t1: t2 / len };
       edgeInfos.push(info);
       vertices.get(k1).edges.push(info);
       vertices.get(k2).edges.push(info);
@@ -271,15 +291,18 @@ export function detectRooms(walls) {
   // 最左转面遍历
   const visited = new Set();
   const faces = [];
+  const halfFace = new Map(); // 有向半边 → 面序号（记录每条半边左侧的房间面）
   for (const e of edgeInfos) {
     for (const [kFrom, kTo] of [[e.a, e.b], [e.b, e.a]]) {
       const halfKey = kFrom + '>' + kTo;
       if (visited.has(halfKey)) continue;
       const pts = [];
+      const faceIdx = faces.length;
       let curFrom = kFrom, curTo = kTo;
       let guard = 0;
       while (guard++ < 5000) {
         visited.add(curFrom + '>' + curTo);
+        halfFace.set(curFrom + '>' + curTo, faceIdx);
         // 在 curTo 处，从指向 curFrom 的边开始，逆时针取下一条（左转）
         const vt = vertices.get(curTo);
         const jdx = vt.angles.findIndex(a => {
@@ -302,18 +325,28 @@ export function detectRooms(walls) {
   const withArea = faces.map(f => ({ pts: f, area: Math.abs(polygonArea(f)) }));
   withArea.sort((a, b) => b.area - a.area);
   const rooms = [];
-  for (let i = 0; i < withArea.length; i++) {
-    const f = withArea[i];
-    if (f.area < 0.5) continue;
-    // 外平面包含所有点；如果一个环的所有顶点都落在某个更大环内且贴边，则跳过
-    let isOuter = i === 0;
-    if (!isOuter) rooms.push(f);
+  const faceKey = withArea.map((f, i) => {
+    if (f.area < 0.5 || i === 0) return null; // 微面与外平面不算房间
+    rooms.push(f);
+    return canonicalKey(f.pts);
+  });
+  // 每条墙子段的 A面/B面 侧房间：半边 a→b（与墙同向）左侧是 A面侧，b→a 左侧是 B面侧
+  const segRooms = new Map(); // wallId -> [{t0, t1, left, right}]
+  for (const e of edgeInfos) {
+    let arr = segRooms.get(e.wallId);
+    if (!arr) { arr = []; segRooms.set(e.wallId, arr); }
+    const left = faceKey[halfFace.get(e.a + '>' + e.b)] ?? null;
+    const right = faceKey[halfFace.get(e.b + '>' + e.a)] ?? null;
+    arr.push({ t0: e.t0, t1: e.t1, left, right });
   }
-  return rooms.map((f, i) => ({
-    key: canonicalKey(f.pts),
-    points: f.pts,
-    area: Math.abs(polygonArea(f.pts)),
-  }));
+  return {
+    rooms: rooms.map(f => ({
+      key: canonicalKey(f.pts),
+      points: f.pts,
+      area: Math.abs(polygonArea(f.pts)),
+    })),
+    segRooms,
+  };
 }
 
 function segIntersect(w1, w2) {
@@ -329,6 +362,78 @@ function segIntersect(w1, w2) {
     return { t1: t * Math.hypot(x2 - x1, z2 - z1), t2: u * Math.hypot(x4 - x3, z4 - z3) };
   }
   return null;
+}
+
+// ---------- 逻辑墙段（派生拆分） ----------
+// 持久化层永远保存原始整墙；墙被 T/X 交叉分到两个房间时，
+// 电路编辑与 3D 预览把墙视为多面独立的"逻辑墙段"，纯派生、随几何实时重算
+
+// 把 detectRooms 的 segRooms（每墙按切点切出的子段 + 两侧房间）合并成逻辑墙段：
+// 相邻且 (left,right) 完全相同的子段合并——段边界恰好是房间归属发生变化的切点；
+// 未被拆分的墙恒为单段 [0,1]。返回 Map<wallId, [{id, wallId, index, t0, t1, left, right}]>
+export function buildWallSegments(segRooms) {
+  const out = new Map();
+  for (const [wallId, subs] of segRooms) {
+    const merged = [];
+    for (const s of subs) {
+      const last = merged[merged.length - 1];
+      if (last && last.left === s.left && last.right === s.right && Math.abs(last.t1 - s.t0) < 1e-9) {
+        last.t1 = s.t1;
+      } else {
+        merged.push({ t0: s.t0, t1: s.t1, left: s.left, right: s.right });
+      }
+    }
+    out.set(wallId, merged.map((m, i) => ({
+      id: `${wallId}#${i}`,
+      wallId,
+      index: i,
+      t0: m.t0,
+      t1: m.t1,
+      left: m.left,
+      right: m.right,
+    })));
+  }
+  return out;
+}
+
+// 未出现在 segRooms 里的墙（孤立墙/无房间）补一个整墙段
+export function segmentsForWall(wallSegments, wallId) {
+  return wallSegments.get(wallId) || [{
+    id: `${wallId}#0`, wallId, index: 0, t0: 0, t1: 1, left: null, right: null,
+  }];
+}
+
+// 节点（pos 沿原始墙 0~1）所属的逻辑墙段；半开区间 [t0,t1)，末段闭区间——
+// 恰落在切点上的节点归属右侧段（确定性规则）
+export function segOfNode(segs, pos) {
+  if (!segs || !segs.length) return null;
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (i === segs.length - 1) {
+      if (pos >= s.t0 - 1e-9 && pos <= s.t1 + 1e-9) return s;
+    } else if (pos >= s.t0 - 1e-9 && pos < s.t1 - 1e-9) {
+      return s;
+    }
+  }
+  return segs[segs.length - 1];
+}
+
+// 段内坐标换算：t（原始墙 0~1）↔ 段内 0~1
+export function segLocalPos(seg, t) {
+  return (t - seg.t0) / (seg.t1 - seg.t0);
+}
+export function segFromLocal(seg, local) {
+  return seg.t0 + local * (seg.t1 - seg.t0);
+}
+
+// 段内是否有带电路的节点
+export function segHasCircuit(data, circuits, seg) {
+  return data.nodes.some(n =>
+    n.wall === seg.wallId &&
+    circuits.nodeCircuit.has(n.id) &&
+    (seg.t1 - seg.t0 >= 1 - 1e-9
+      ? n.pos >= 0 && n.pos <= 1
+      : n.pos >= seg.t0 - 1e-9 && n.pos < seg.t1 - 1e-9));
 }
 
 export function pointInRoom(x, z, room) {
@@ -411,13 +516,19 @@ export function wiresAt(data, nodeId) {
 
 export function validateData(data) {
   if (!data || typeof data !== 'object') return '数据不是对象';
-  if (data.version !== 1) return `不支持的版本: ${data.version}`;
+  if (data.version !== 2) return `不支持的版本: ${data.version}`;
   if (!Array.isArray(data.walls) || !Array.isArray(data.nodes) || !Array.isArray(data.wires)) {
     return 'walls/nodes/wires 必须是数组';
   }
   // 强电箱是特殊设备节点，最多一个；尚未放置（空户型）是允许的
   const boxes = data.nodes.filter(n => n.deviceType === 'breakerBox');
   if (boxes.length > 1) return '强电箱最多一个';
+  // 节点 pos 为沿原始墙的 0~1 归一化坐标
+  const wallIds = new Set(data.walls.map(w => w.id));
+  for (const n of data.nodes) {
+    if (!wallIds.has(n.wall)) return `节点 ${n.id} 引用了不存在的墙`;
+    if (!(n.pos >= 0) || !(n.pos <= 1)) return `节点 ${n.id} 的 pos 必须是 0~1 归一化坐标`;
+  }
   // doors 为可选字段（旧数据没有）：存在时须为数组且 wall 引用有效
   if (data.doors != null) {
     if (!Array.isArray(data.doors)) return 'doors 必须是数组';

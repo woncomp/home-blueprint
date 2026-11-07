@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "walls": [
     {
       "id": "w1",
@@ -87,7 +87,7 @@
       "deviceType": "breakerBox",
       "wall": "w4",
       "face": 1,
-      "pos": 2.2,
+      "pos": 0.3667,
       "height": 1.6,
       "label": "强电箱",
       "breakers": [
@@ -113,7 +113,7 @@
       "type": "terminal",
       "wall": "w4",
       "face": 1,
-      "pos": 2.2,
+      "pos": 0.3667,
       "height": 1.6,
       "label": "客厅插座端子"
     },
@@ -122,7 +122,7 @@
       "type": "terminal",
       "wall": "w4",
       "face": 1,
-      "pos": 2.2,
+      "pos": 0.3667,
       "height": 1.6,
       "label": "卧室插座端子"
     },
@@ -131,7 +131,7 @@
       "type": "terminal",
       "wall": "w4",
       "face": 1,
-      "pos": 2.2,
+      "pos": 0.3667,
       "height": 1.6,
       "label": "照明端子"
     },
@@ -140,7 +140,7 @@
       "type": "turn",
       "wall": "w4",
       "face": 1,
-      "pos": 0.15,
+      "pos": 0.025,
       "height": 0.3,
       "label": ""
     },
@@ -149,7 +149,7 @@
       "type": "turn",
       "wall": "w3",
       "face": 1,
-      "pos": 7.85,
+      "pos": 0.9813,
       "height": 0.3,
       "label": ""
     },
@@ -158,7 +158,7 @@
       "type": "split",
       "wall": "w3",
       "face": 1,
-      "pos": 7.0,
+      "pos": 0.875,
       "height": 0.3,
       "label": ""
     },
@@ -168,7 +168,7 @@
       "deviceType": "socket",
       "wall": "w3",
       "face": 1,
-      "pos": 6.0,
+      "pos": 0.75,
       "height": 0.3,
       "label": "客厅插座①"
     },
@@ -178,7 +178,7 @@
       "deviceType": "socket",
       "wall": "w3",
       "face": 1,
-      "pos": 3.0,
+      "pos": 0.375,
       "height": 0.3,
       "label": "客厅插座②"
     },
@@ -187,7 +187,7 @@
       "type": "turn",
       "wall": "w4",
       "face": 1,
-      "pos": 5.85,
+      "pos": 0.975,
       "height": 0.3,
       "label": ""
     },
@@ -196,7 +196,7 @@
       "type": "turn",
       "wall": "w1",
       "face": 1,
-      "pos": 0.15,
+      "pos": 0.0188,
       "height": 0.3,
       "label": ""
     },
@@ -205,7 +205,7 @@
       "type": "split",
       "wall": "w1",
       "face": 1,
-      "pos": 0.6,
+      "pos": 0.075,
       "height": 0.3,
       "label": ""
     },
@@ -215,7 +215,7 @@
       "deviceType": "socket",
       "wall": "w1",
       "face": 1,
-      "pos": 1.2,
+      "pos": 0.15,
       "height": 0.3,
       "label": "卧室A插座"
     },
@@ -225,7 +225,7 @@
       "deviceType": "socket",
       "wall": "w1",
       "face": 1,
-      "pos": 5.0,
+      "pos": 0.625,
       "height": 0.3,
       "label": "卧室B插座"
     },
@@ -234,7 +234,7 @@
       "type": "turn",
       "wall": "w4",
       "face": 1,
-      "pos": 0.15,
+      "pos": 0.025,
       "height": 1.3,
       "label": ""
     },
@@ -243,7 +243,7 @@
       "type": "turn",
       "wall": "w3",
       "face": 1,
-      "pos": 7.85,
+      "pos": 0.9813,
       "height": 1.3,
       "label": ""
     },
@@ -252,7 +252,7 @@
       "type": "split",
       "wall": "w3",
       "face": 1,
-      "pos": 7.3,
+      "pos": 0.9125,
       "height": 1.3,
       "label": ""
     },
@@ -262,7 +262,7 @@
       "deviceType": "switch",
       "wall": "w3",
       "face": 1,
-      "pos": 6.5,
+      "pos": 0.8125,
       "height": 1.3,
       "label": "客厅开关"
     },
@@ -271,7 +271,7 @@
       "type": "turn",
       "wall": "w3",
       "face": 1,
-      "pos": 0.15,
+      "pos": 0.0188,
       "height": 2.5,
       "label": ""
     },
@@ -280,7 +280,7 @@
       "type": "turn",
       "wall": "w2",
       "face": 1,
-      "pos": 5.85,
+      "pos": 0.975,
       "height": 2.5,
       "label": ""
     },
@@ -289,7 +289,7 @@
       "type": "turn",
       "wall": "w2",
       "face": 1,
-      "pos": 3.3,
+      "pos": 0.55,
       "height": 2.5,
       "label": ""
     },
@@ -298,7 +298,7 @@
       "type": "turn",
       "wall": "w5",
       "face": 1,
-      "pos": 7.85,
+      "pos": 0.9813,
       "height": 2.5,
       "label": ""
     },
@@ -308,7 +308,7 @@
       "deviceType": "light",
       "wall": "w5",
       "face": 1,
-      "pos": 4.0,
+      "pos": 0.5,
       "height": 2.55,
       "label": "客厅吸顶灯"
     }
@@ -436,18 +436,18 @@
     {
       "id": "d1",
       "wall": "w1",
-      "pos": 2.0,
+      "pos": 2,
       "width": 0.9,
       "face": 1,
-      "height": 2.0
+      "height": 2
     },
     {
       "id": "d2",
       "wall": "w5",
-      "pos": 6.0,
+      "pos": 6,
       "width": 0.9,
       "face": 0,
-      "height": 2.0
+      "height": 2
     }
   ]
 }

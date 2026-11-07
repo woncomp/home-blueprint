@@ -6,6 +6,9 @@ import {
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
+// 高度方向吸附：HEIGHT_SEGMENTS 段均分墙面 → HEIGHT_SEGMENTS-1 条横向参考线
+const HEIGHT_SEGMENTS = 6;
+const Y_SNAP_PX = 8; // 吸附半径（屏幕像素，随缩放换算成米）
 
 export class WallFaceDialog {
   constructor(cbs) {
@@ -35,11 +38,13 @@ export class WallFaceDialog {
     this.svg.addEventListener('mousemove', e => this.onSvgHover(e));
   }
 
-  open(data, wallId, face, mode) {
+  // seg：逻辑墙段快照 {id, wallId, index, t0, t1}（派生拆分），null 视为整墙
+  open(data, wallId, face, mode, seg) {
     this.data = data;
     this.wallId = wallId;
     this.face = face;
     this.mode = mode;
+    this.seg = seg && seg.wallId === wallId ? { id: seg.id, wallId, index: seg.index, t0: seg.t0, t1: seg.t1 } : null;
     this.selectedNodeId = null;
     this.selectedWireId = null;
     this.dragging = null;
@@ -71,9 +76,13 @@ export class WallFaceDialog {
   wall() { return this.data.walls.find(w => w.id === this.wallId); }
 
   // ---------- 坐标映射 ----------
+  // 视图内统一使用"段内米制"（0 ~ 段长）；node.pos 是沿原始整墙的 0~1，
+  // 两者通过 t0/墙长换算
   computeView() {
     const wall = this.wall();
-    const len = wallLen(wall);
+    const t0 = this.seg ? this.seg.t0 : 0;
+    const t1 = this.seg ? this.seg.t1 : 1;
+    const len = (t1 - t0) * wallLen(wall);
     const h = wall.height || 2.8;
     const svgW = this.svg.clientWidth || 800;
     const svgH = this.svg.clientHeight || 500;
@@ -85,13 +94,50 @@ export class WallFaceDialog {
       len, h,
     };
   }
-  posX(pos) { return this.view.ox + pos * this.view.scale; }
+  posX(local) { return this.view.ox + local * this.view.scale; }
   heightY(height) { return this.view.oy + (this.view.h - height) * this.view.scale; }
   xPos(x) { return (x - this.view.ox) / this.view.scale; }
   yHeight(y) { return this.view.h - (y - this.view.oy) / this.view.scale; }
 
+  // 高度参考线：把墙高均分 HEIGHT_SEGMENTS 段，返回中间 HEIGHT_SEGMENTS-1 条的高度（米）
+  heightGuides() {
+    const g = [];
+    for (let k = 1; k < HEIGHT_SEGMENTS; k++) g.push(this.view.h * k / HEIGHT_SEGMENTS);
+    return g;
+  }
+  // 靠近参考线（Y_SNAP_PX 屏幕像素内）则吸附到线上；altKey 禁用
+  snapHeight(height, altKey) {
+    if (altKey) return height;
+    const r = Y_SNAP_PX / this.view.scale;
+    let best = null, bd = r;
+    for (const g of this.heightGuides()) {
+      const d = Math.abs(height - g);
+      if (d <= bd) { bd = d; best = g; }
+    }
+    return best == null ? height : best;
+  }
+
+  // 节点 pos（整墙 0~1）→ 段内米制
+  localOf(node) {
+    const t0 = this.seg ? this.seg.t0 : 0;
+    return (node.pos - t0) * wallLen(this.wall());
+  }
+  // 段内米制 → 整墙 0~1
+  tOf(local) {
+    const t0 = this.seg ? this.seg.t0 : 0;
+    return t0 + local / wallLen(this.wall());
+  }
+
+  // 节点是否属于本逻辑墙段：半开区间 [t0,t1)，末段闭区间——恰在切点上归右侧段
+  inSeg(node) {
+    if (!this.seg) return true;
+    const { t0, t1 } = this.seg;
+    const last = t1 >= 1 - 1e-9;
+    return node.pos >= t0 - 1e-9 && (last ? node.pos <= t1 + 1e-9 : node.pos < t1 - 1e-9);
+  }
+
   nodesOnFace() {
-    return this.data.nodes.filter(n => n.wall === this.wallId && n.face === this.face);
+    return this.data.nodes.filter(n => n.wall === this.wallId && n.face === this.face && this.inSeg(n));
   }
 
   // ---------- 渲染 ----------
@@ -100,7 +146,8 @@ export class WallFaceDialog {
     this.computeView();
     this.circuits = computeCircuits(this.data);
     const wall = this.wall();
-    this.titleEl.textContent = `墙 ${wall.id} · ${this.face === 0 ? 'A 面' : 'B 面'}（长 ${this.view.len.toFixed(2)}m × 高 ${this.view.h}m）`;
+    const segTxt = this.seg && (this.seg.t0 > 1e-9 || this.seg.t1 < 1 - 1e-9) ? ` · 段 ${this.seg.index + 1}` : '';
+    this.titleEl.textContent = `墙 ${wall.id} · ${this.face === 0 ? 'A 面' : 'B 面'}${segTxt}（长 ${this.view.len.toFixed(2)}m × 高 ${this.view.h}m）`;
     this.svg.innerHTML = '';
     this.svg.setAttribute('viewBox', `0 0 ${this.svg.clientWidth || 800} ${this.svg.clientHeight || 500}`);
 
@@ -143,9 +190,9 @@ export class WallFaceDialog {
 
   renderBreakerBox() {
     const box = findBreakerBox(this.data);
-    if (!box || box.wall !== this.wallId || box.face !== this.face) return;
+    if (!box || box.wall !== this.wallId || box.face !== this.face || !this.inSeg(box)) return;
     const bw = BREAKER_BOX_SIZE.w * this.view.scale, bh = BREAKER_BOX_SIZE.h * this.view.scale;
-    const bx = this.posX(box.pos - BREAKER_BOX_SIZE.w / 2), by = this.heightY(box.height + BREAKER_BOX_SIZE.h / 2);
+    const bx = this.posX(this.localOf(box) - BREAKER_BOX_SIZE.w / 2), by = this.heightY(box.height + BREAKER_BOX_SIZE.h / 2);
     const g = el('g', {});
     g.appendChild(el('rect', {
       x: bx, y: by, width: bw, height: bh,
@@ -192,10 +239,14 @@ export class WallFaceDialog {
     for (const wire of this.data.wires) {
       const a = nodes.get(wire.from), b = nodes.get(wire.to);
       if (!a || !b) continue;
-      const onFace = n => n.wall === this.wallId && n.face === this.face;
+      const onFace = n => n.wall === this.wallId && n.face === this.face && this.inSeg(n);
       if (!onFace(a) && !onFace(b)) continue;
-      // 端点映射到本面坐标：跨面连线（link 是虚线；wire 一般同面）
-      const px = n => onFace(n) ? this.posX(n.pos) : (n.wall === this.wallId ? this.posX(n.pos) : this.posX(n.pos));
+      // 端点映射到本面坐标：同墙（跨面/跨段）的端点取段内坐标并截断到本段边界，画虚线
+      const px = n => {
+        if (onFace(n)) return this.posX(this.localOf(n));
+        if (n.wall === this.wallId) return this.posX(clamp(this.localOf(n), 0, this.view.len));
+        return this.posX(n.pos * this.view.len);
+      };
       const py = n => this.heightY(n.height);
       const cIdx = this.circuits.wireCircuit.get(wire.id);
       const color = cIdx != null ? this.circuits.circuits[cIdx].color : '#888';
@@ -241,12 +292,12 @@ export class WallFaceDialog {
       const a = this.data.nodes.find(n => n.id === link.a);
       const b = this.data.nodes.find(n => n.id === link.b);
       if (!a || !b) continue;
-      const onFace = n => n.wall === this.wallId && n.face === this.face;
+      const onFace = n => n.wall === this.wallId && n.face === this.face && this.inSeg(n);
       if (!onFace(a) && !onFace(b)) continue;
       const other = onFace(a) ? b : a;
       const self = onFace(a) ? a : b;
-      const x1 = this.posX(self.pos), y1 = this.heightY(self.height);
-      const x2 = this.posX(other.wall === this.wallId ? other.pos : this.view.len - other.pos);
+      const x1 = this.posX(this.localOf(self)), y1 = this.heightY(self.height);
+      const x2 = this.posX(other.wall === this.wallId ? clamp(this.localOf(other), 0, this.view.len) : other.pos * this.view.len);
       const y2 = y1 + (other.face === self.face ? 0 : 26);
       const path = el('path', {
         d: `M ${x1} ${y1} Q ${(x1 + x2) / 2} ${Math.max(y1, y2) + 24} ${x2} ${y2}`,
@@ -275,7 +326,7 @@ export class WallFaceDialog {
     for (const node of this.nodesOnFace()) {
       if (node.type === 'terminal') continue;
       if (node.deviceType === 'breakerBox') continue; // 强电箱由 renderBreakerBox 单独绘制
-      const x = this.posX(node.pos), y = this.heightY(node.height);
+      const x = this.posX(this.localOf(node)), y = this.heightY(node.height);
       const isSel = this.selectedNodeId === node.id;
       const cIdx = this.circuits.nodeCircuit.get(node.id);
       const cColor = cIdx != null ? this.circuits.circuits[cIdx].color : '#666';
@@ -381,10 +432,10 @@ export class WallFaceDialog {
     const pt = this.svgPoint(e);
     if (this.tool === 'turn' || this.tool === 'split' ||
         this.tool === 'socket' || this.tool === 'switch' || this.tool === 'light') {
-      const pos = clamp(this.xPos(pt.x), 0, this.view.len);
+      const local = clamp(this.xPos(pt.x), 0, this.view.len);
       const height = clamp(this.yHeight(pt.y), 0, this.view.h);
       const type = ['socket', 'switch', 'light'].includes(this.tool) ? 'device' : this.tool;
-      const node = createNode(type, this.wallId, this.face, round2(pos), round2(height), this.tool);
+      const node = createNode(type, this.wallId, this.face, round4(this.tOf(local)), round2(height), this.tool);
       this.data.nodes.push(node);
       this.selectedNodeId = node.id;
       this.changed();
@@ -400,7 +451,7 @@ export class WallFaceDialog {
     const node = this.data.nodes.find(n => n.id === this.dragging.nodeId);
     if (!node || node.type === 'terminal') return;
     const pt = this.svgPoint(e);
-    node.pos = round2(clamp(this.xPos(pt.x), 0, this.view.len));
+    node.pos = round4(this.tOf(clamp(this.xPos(pt.x), 0, this.view.len)));
     node.height = round2(clamp(this.yHeight(pt.y), 0, this.view.h));
     this.dragging.moved = true;
     this.render();
@@ -513,7 +564,7 @@ export class WallFaceDialog {
         row.appendChild(lab); row.appendChild(input);
         this.infoEl.appendChild(row);
       };
-      mkInput('沿墙位置 (m)', node.pos, v => { node.pos = clamp(v, 0, this.view.len); });
+      mkInput('沿墙位置 (m)', round2(this.localOf(node)), v => { node.pos = round4(this.tOf(clamp(v, 0, this.view.len))); });
       mkInput('离地高度 (m)', node.height, v => { node.height = clamp(v, 0, this.view.h); });
 
       const labRow = document.createElement('div');
@@ -574,10 +625,12 @@ export class WallFaceDialog {
         cands.push({ node: n, d, desc: linkDesc(this.data, n) });
       }
     }
-    // 跨墙另一面：自动镜像
+    // 跨墙另一面：自动镜像（pos 为 0~1，按米比较需换算）
+    const selfWall = walls.get(self.wall);
+    const posEps = selfWall ? 0.01 / wallLen(selfWall) : 0.01;
     const mirror = this.data.nodes.find(n =>
       n.wall === self.wall && n.face !== self.face &&
-      Math.abs(n.pos - self.pos) < 0.01 && Math.abs(n.height - self.height) < 0.01);
+      Math.abs(n.pos - self.pos) < posEps && Math.abs(n.height - self.height) < 0.01);
     if (!mirror) {
       cands.unshift({ node: null, mirror: true, desc: `在 ${this.wall().id} 墙 ${self.face === 0 ? 'B' : 'A'} 面创建对应节点` });
     }
@@ -617,7 +670,9 @@ function linkDesc(data, node) {
   const name = node.type === 'device'
     ? `设备(${(DEVICE_TYPES[node.deviceType] || {}).name})`
     : NODE_TYPE_NAMES[node.type] || node.type;
-  return `墙${node.wall} ${node.face === 0 ? 'A' : 'B'}面 · ${name} @${node.pos.toFixed(2)}m`;
+  const wall = (data.walls || []).find(w => w.id === node.wall);
+  const m = wall ? node.pos * wallLen(wall) : 0;
+  return `墙${node.wall} ${node.face === 0 ? 'A' : 'B'}面 · ${name} @${m.toFixed(2)}m`;
 }
 
 function el(tag, attrs) {
@@ -628,3 +683,4 @@ function el(tag, attrs) {
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 function round2(v) { return Math.round(v * 100) / 100; }
+function round4(v) { return Math.round(v * 10000) / 10000; }

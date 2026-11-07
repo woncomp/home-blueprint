@@ -4,6 +4,7 @@ import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
+  buildWallSegments, segmentsForWall, segOfNode,
 } from './model.js';
 import { buildWallShell, locateWall } from './wallgeometry.js';
 
@@ -42,6 +43,7 @@ export class Scene3D {
 
     this.data = null;
     this.rooms = [];
+    this.wallSegments = new Map(); // 逻辑墙段（派生拆分），rebuild 时缓存
     this.circuits = { circuits: [], wireCircuit: new Map(), nodeCircuit: new Map(), wallsWithCircuit: new Set() };
     this.selected = null;        // { kind, id }
     this.highlightCircuit = null; // 线路索引或 null
@@ -122,7 +124,9 @@ export class Scene3D {
     this._hovered = [];
     this._pickables = [];
 
-    this.rooms = detectRooms(this.data.walls);
+    const { rooms, segRooms } = detectRooms(this.data.walls);
+    this.rooms = rooms;
+    this.wallSegments = buildWallSegments(segRooms);
     this.circuits = computeCircuits(this.data);
 
     this.buildRooms();
@@ -233,12 +237,15 @@ export class Scene3D {
     }
   }
 
-  // 墙面单面预览：只画边缘矩形框
-  makeFaceOutline(wall, face, color) {
+  // 墙面单面预览：只画边缘矩形框；seg 存在时只画该逻辑墙段范围
+  makeFaceOutline(wall, face, color, seg) {
     const len = wallLen(wall);
+    const t0 = seg ? seg.t0 : 0, t1 = seg ? seg.t1 : 1;
+    const segLen = (t1 - t0) * len;
+    const mid = (t0 + t1) / 2 * len;
     const h = wall.height || 2.8;
     const t = wall.thickness || 0.2;
-    const hw = (len + t) / 2, hh = h / 2;
+    const hw = (segLen + t) / 2, hh = h / 2;
     const geo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-hw, -hh, 0),
       new THREE.Vector3(hw, -hh, 0),
@@ -250,9 +257,9 @@ export class Scene3D {
     const [dx, dz] = wallDir(wall);
     const [nx, nz] = wallNormal(wall, face);
     frame.position.set(
-      wall.start[0] + dx * len / 2 + nx * (t / 2 + 0.005),
+      wall.start[0] + dx * mid + nx * (t / 2 + 0.005),
       h / 2,
-      wall.start[1] + dz * len / 2 + nz * (t / 2 + 0.005),
+      wall.start[1] + dz * mid + nz * (t / 2 + 0.005),
     );
     frame.rotation.y = Math.atan2(nx, nz);
     frame.userData.noPick = true;
@@ -261,14 +268,14 @@ export class Scene3D {
 
   // 悬停轻微高亮，提示对象可点击；墙面显示单面预览（点击展开 2D）
   setHover(hit) {
-    const key = hit ? `${hit.kind}:${hit.id}:${hit.face ?? ''}` : null;
+    const key = hit ? `${hit.kind}:${hit.id}:${hit.face ?? ''}:${hit.seg ? hit.seg.id : ''}` : null;
     if (key === this._hoverKey) return;
     this._hoverKey = key;
     this.clearHover();
     if (!hit) return;
     if (hit.kind === 'wall') {
       const wall = this.wallsById().get(hit.id);
-      if (wall) this.hoverGroup.add(this.makeFaceOutline(wall, hit.face, 0x8fc3ee));
+      if (wall) this.hoverGroup.add(this.makeFaceOutline(wall, hit.face, 0x8fc3ee, hit.seg));
       return;
     }
     for (const g of [this.nodeGroup, this.wireGroup, this.staticGroup]) {
@@ -460,6 +467,13 @@ export class Scene3D {
         if (!loc) continue;
         result.id = loc.wall.id;
         result.face = loc.face;
+        // 命中点投影到墙线得 0~1 坐标，定位所属逻辑墙段（派生拆分）
+        const L = wallLen(loc.wall);
+        if (L > 1e-9) {
+          const [dx, dz] = wallDir(loc.wall);
+          const t01 = ((hit.point.x - loc.wall.start[0]) * dx + (hit.point.z - loc.wall.start[1]) * dz) / L;
+          result.seg = segOfNode(segmentsForWall(this.wallSegments, loc.wall.id), Math.min(1, Math.max(0, t01)));
+        }
       }
       if (ud.kind === 'room') {
         // 房间只用于点选命名，优先级放低：若后面还有更近的非房间命中则取后者

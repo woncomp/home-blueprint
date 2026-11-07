@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, segHasCircuit } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -44,9 +44,9 @@ const plan2d = new Plan2D({
   onDeleteWall: deleteWallById,
   onDeleteDoor: deleteDoorById,
   onWallAdded: wall => {
-    // 首堵墙创建后自动在墙中点建立强电箱（特殊设备节点）
+    // 首堵墙创建后自动在墙中点建立强电箱（特殊设备节点）；pos 为 0~1 归一化坐标
     if (!findBreakerBox(app.data)) {
-      app.data.nodes.push(createBreakerBox(wall.id, 1, Math.round((wallLen(wall) / 2) * 100) / 100));
+      app.data.nodes.push(createBreakerBox(wall.id, 1, 0.5));
     }
   },
 });
@@ -250,12 +250,14 @@ function syncTerminals() {
 let mouseDownPos = null;
 
 // 查看模式下：没有任何电路的墙不可展开 2D、也没有 hover 预览；
-// 强电箱是特殊设备，所在墙始终可查看
+// 强电箱是特殊设备，所在墙始终可查看；墙被派生拆分时按逻辑墙段判断
 function wallPickableInView(hit) {
   if (app.mode !== 'view' || hit.kind !== 'wall') return true;
-  if (scene3d.circuits.wallsWithCircuit.has(hit.id)) return true;
+  if (hit.seg && segHasCircuit(app.data, scene3d.circuits, hit.seg)) return true;
+  if (!hit.seg && scene3d.circuits.wallsWithCircuit.has(hit.id)) return true;
   const box = findBreakerBox(app.data);
-  return !!box && box.wall === hit.id;
+  if (!box || box.wall !== hit.id) return false;
+  return !hit.seg || (box.pos >= hit.seg.t0 - 1e-9 && box.pos <= hit.seg.t1 + 1e-9);
 }
 
 canvas.addEventListener('mousedown', e => {
@@ -278,12 +280,12 @@ window.addEventListener('mousemove', e => {
     if (!wall) return;
     const p = new THREE.Vector3();
     if (!scene3d.groundPoint(e.clientX, e.clientY, p)) return;
-    // 投影到墙线
+    // 投影到墙线，写回 0~1 归一化坐标（距墙端至少 0.3m）
+    const L = wallLen(wall);
     const [dx, dz] = wallDir(wall);
     const rx = p.x - wall.start[0], rz = p.z - wall.start[1];
-    let t = rx * dx + rz * dz;
-    t = Math.min(wallLen(wall) - 0.3, Math.max(0.3, t));
-    box.pos = Math.round(t * 100) / 100;
+    const t = Math.min(L - 0.3, Math.max(0.3, rx * dx + rz * dz));
+    box.pos = Math.round((t / L) * 10000) / 10000;
     syncTerminals();
     scene3d.updateData(app.data);
   } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
@@ -311,10 +313,10 @@ function handleCanvasClick(e) {
   if (wallface.isOpen() || app.mode === 'plan') return;
   const rawHit = scene3d.pick(e.clientX, e.clientY);
   const hit = rawHit && wallPickableInView(rawHit) ? rawHit : null;
-  // 点击墙面 → 直接展开该面 2D 视图
+  // 点击墙面 → 直接展开该面 2D 视图（带逻辑墙段，被拆分的墙按段展开）
   if (hit && hit.kind === 'wall') {
     scene3d.setHover(null);
-    wallface.open(app.data, hit.id, hit.face, app.mode);
+    wallface.open(app.data, hit.id, hit.face, app.mode, hit.seg);
     return;
   }
   app.selection = hit;

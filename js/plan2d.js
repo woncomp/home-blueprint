@@ -173,7 +173,8 @@ export class Plan2D {
       const wall = byId.get(node.wall);
       if (!wall) continue;
       const [dx, dz] = wallDir(wall);
-      const [sx, sy] = this.toScreen([wall.start[0] + dx * node.pos, wall.start[1] + dz * node.pos]);
+      const np = node.pos * wallLen(wall);
+      const [sx, sy] = this.toScreen([wall.start[0] + dx * np, wall.start[1] + dz * np]);
       el('circle', { cx: sx, cy: sy, r: 2.5, class: 'plan-node' }, gMark);
     }
     const box = findBreakerBox(this.data());
@@ -184,7 +185,8 @@ export class Plan2D {
       // 顶视 footprint：沿墙长 = 箱体宽，跨墙宽 = 墙厚 + 箱深 + 边距（骑在墙面外侧）
       const hl = BREAKER_BOX_SIZE.w / 2, off = t2 / 2 + BREAKER_BOX_SIZE.d / 2 + 0.02;
       const [nx, nz] = [dz, -dx];
-      const c = [wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos];
+      const bp = box.pos * wallLen(wall);
+      const c = [wall.start[0] + dx * bp, wall.start[1] + dz * bp];
       const pts = [
         [c[0] - dx * hl + nx * off, c[1] - dz * hl + nz * off],
         [c[0] + dx * hl + nx * off, c[1] + dz * hl + nz * off],
@@ -432,7 +434,8 @@ export class Plan2D {
     const wall = this.data().walls.find(w => w.id === box.wall);
     if (!wall) return null;
     const [dx, dz] = wallDir(wall);
-    const [bx, by] = this.toScreen([wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos]);
+    const bp = box.pos * wallLen(wall);
+    const [bx, by] = this.toScreen([wall.start[0] + dx * bp, wall.start[1] + dz * bp]);
     return Math.hypot(bx - sx, by - sy) <= 10 ? box : null;
   }
 
@@ -486,10 +489,10 @@ export class Plan2D {
       if (!wall) continue;
       if (wallLen(wall) < MIN_WALL - 1e-9) return `墙长不能小于 ${MIN_WALL}m`;
     }
+    // 节点 pos 为 0~1 归一化坐标：缩短墙时设备按比例跟随，永不落墙外
     for (const node of data.nodes) {
       if (!affected.has(node.wall)) continue;
-      const wall = byId.get(node.wall);
-      if (wall && (node.pos < -1e-9 || node.pos > wallLen(wall) + 1e-9)) {
+      if (node.pos < -1e-9 || node.pos > 1 + 1e-9) {
         return '修改会使节点或设备落在墙外';
       }
     }
@@ -689,7 +692,7 @@ export class Plan2D {
       let t = pr.dist;
       if (!e.altKey) t = round1(t);
       t = Math.max(0.3, Math.min(wallLen(wall) - 0.3, t));
-      box.pos = t;
+      box.pos = t / wallLen(wall); // 写回 0~1 归一化坐标
       d.dimText = `位置 ${t.toFixed(2)} m`;
       this.updateCursor();
       this.render();
