@@ -634,6 +634,42 @@ export function segOfNode(segs, pos) {
   return segs[segs.length - 1];
 }
 
+// 面范围段：把相邻的"命中面同侧房间相同"的逻辑墙段合并成一个范围。
+// T/X 型拆分只作用于被接触的一面：stem 只改变接触侧的房间归属，
+// 未被接触的一面沿墙房间不变 → 合并为整面范围（可整面悬停/展开）；
+// X 型交叉两面房间都在交点变化 → 两面都拆。边界取 stem 中心线（与
+// 逻辑段一致），落在接头覆盖条内的节点仍归属某一侧，不会失联。
+// pos 为原始墙 0~1 坐标，半开区间归属与 segOfNode 一致（切点归右侧）；
+// 返回段快照 {id, wallId, index, t0, t1}，无段时返回 null
+export function faceSegOf(segs, face, pos) {
+  if (!segs || !segs.length) return null;
+  const side = face === 0 ? 'left' : 'right';
+  const groups = [];
+  for (const s of segs) {
+    const last = groups[groups.length - 1];
+    if (last && last[0][side] === s[side]) last.push(s);
+    else groups.push([s]);
+  }
+  const t = Math.min(1, Math.max(0, pos));
+  for (let g = 0; g < groups.length; g++) {
+    const first = groups[g][0], lastSeg = groups[g][groups[g].length - 1];
+    const inRange = g === groups.length - 1
+      ? t >= first.t0 - 1e-9 && t <= lastSeg.t1 + 1e-9
+      : t >= first.t0 - 1e-9 && t < lastSeg.t1 - 1e-9;
+    if (inRange) {
+      return { id: `${first.wallId}#${g}`, wallId: first.wallId, index: g, t0: first.t0, t1: lastSeg.t1 };
+    }
+  }
+  // 防御：浮点间隙导致未命中时取最近的组
+  let best = 0, bestD = Infinity;
+  groups.forEach((grp, g) => {
+    const d = t < grp[0].t0 ? grp[0].t0 - t : t > grp[grp.length - 1].t1 ? t - grp[grp.length - 1].t1 : 0;
+    if (d < bestD) { bestD = d; best = g; }
+  });
+  const grp = groups[best];
+  return { id: `${grp[0].wallId}#${best}`, wallId: grp[0].wallId, index: best, t0: grp[0].t0, t1: grp[grp.length - 1].t1 };
+}
+
 // 段内坐标换算：t（原始墙 0~1）↔ 段内 0~1
 export function segLocalPos(seg, t) {
   return (t - seg.t0) / (seg.t1 - seg.t0);
@@ -650,14 +686,6 @@ export function segHasCircuit(data, circuits, seg) {
     (seg.t1 - seg.t0 >= 1 - 1e-9
       ? n.pos >= 0 && n.pos <= 1
       : n.pos >= seg.t0 - 1e-9 && n.pos < seg.t1 - 1e-9));
-}
-
-// 查看模式下墙体是否允许悬停/点击。资格按原始整墙判断：只要墙的任意部分有电路
-// （或强电箱在其上），整墙所有逻辑段都可拾取；hover 线框和 2D 展开仍按命中段进行
-export function wallPickableInView(data, circuits, wallId) {
-  if (circuits.wallsWithCircuit.has(wallId)) return true;
-  const box = findBreakerBox(data);
-  return !!box && box.wall === wallId;
 }
 
 export function pointInRoom(x, z, room) {

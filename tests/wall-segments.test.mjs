@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  detectRooms, buildWallSegments, segmentsForWall, segOfNode,
-  segLocalPos, segFromLocal, segHasCircuit, computeCircuits, wallPickableInView,
+  detectRooms, buildWallSegments, segmentsForWall, segOfNode, faceSegOf,
+  segLocalPos, segFromLocal, segHasCircuit, computeCircuits,
   normalizeData, validateData, nodeWorldPos,
 } from '../js/model.js';
 import { WallFaceDialog } from '../js/wallface.js';
@@ -163,63 +163,6 @@ test('段电路判断：只统计落在段范围内的节点', () => {
   assert.equal(segHasCircuit(data, circuits, far), false);
 });
 
-test('查看拾取资格：整墙有电路时，无电路的派生段仍可拾取', () => {
-  // 默认户型客厅带门墙（w5 横墙）拓扑：w6 竖墙中点接入，w5 被拆成左右两段
-  const walls = [
-    ...square(),
-    { id: 'w5', start: [0, 3.5], end: [8, 3.5], height: 2.8, thickness: 0.2 },
-    { id: 'w6', start: [4, 0], end: [4, 3.5], height: 2.8, thickness: 0.2 },
-  ];
-  const data = {
-    nodes: [
-      { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w3', face: 1, pos: 0.5, height: 1.6, breakers: [{ id: 'br1', label: 'B1', terminal: 't1' }] },
-      { id: 't1', type: 'terminal', wall: 'w3', face: 1, pos: 0.5, height: 1.6 },
-      { id: 'n1', type: 'device', deviceType: 'socket', wall: 'w5', face: 1, pos: 0.9, height: 0.3 },
-    ],
-    wires: [{ id: 'e1', from: 't1', to: 'n1' }],
-    links: [],
-  };
-  const circuits = computeCircuits(data);
-  const w5segs = segsOf(walls, 'w5');
-  const left = w5segs.find(s => s.index === 0);  // [0, 0.5)
-  const right = w5segs.find(s => s.index === 1); // [0.5, 1]
-  assert.equal(segHasCircuit(data, circuits, left), false);
-  assert.equal(segHasCircuit(data, circuits, right), true);
-  // 左段本身无电路，但原始墙 w5 有电路 → 查看模式下整墙两段都可拾取
-  assert.equal(wallPickableInView(data, circuits, left.wallId), true);
-  assert.equal(wallPickableInView(data, circuits, right.wallId), true);
-});
-
-test('查看拾取资格：完全无电路且不是强电箱所在墙的墙不可拾取', () => {
-  const data = {
-    nodes: [
-      { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w3', face: 1, pos: 0.5, height: 1.6, breakers: [{ id: 'br1', label: 'B1', terminal: 't1' }] },
-      { id: 't1', type: 'terminal', wall: 'w3', face: 1, pos: 0.5, height: 1.6 },
-      { id: 'n1', type: 'device', deviceType: 'socket', wall: 'w3', face: 1, pos: 0.75, height: 0.3 },
-    ],
-    wires: [{ id: 'e1', from: 't1', to: 'n1' }],
-    links: [],
-  };
-  const circuits = computeCircuits(data);
-  assert.equal(wallPickableInView(data, circuits, 'w3'), true);
-  assert.equal(wallPickableInView(data, circuits, 'w1'), false);
-  assert.equal(wallPickableInView(data, circuits, 'nope'), false);
-});
-
-test('查看拾取资格：强电箱所在墙整体豁免（即使该墙本身无电路）', () => {
-  const data = {
-    nodes: [
-      { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w1', face: 0, pos: 0.25, height: 1.6, breakers: [] },
-    ],
-    wires: [],
-    links: [],
-  };
-  const circuits = computeCircuits(data);
-  assert.equal(circuits.wallsWithCircuit.size, 0);
-  assert.equal(wallPickableInView(data, circuits, 'w1'), true);
-  assert.equal(wallPickableInView(data, circuits, 'w2'), false);
-});
-
 test('v1（米制 pos）→ v2 迁移：除以墙长、clamp、4 位小数', () => {
   const data = {
     version: 1,
@@ -265,6 +208,94 @@ test('validateData：v2 要求 pos∈[0,1]，门仍是米数', () => {
     ...base,
     nodes: [{ id: 'x', type: 'turn', wall: 'a', face: 0, pos: -0.1, height: 1 }],
   }));
+});
+
+test('面范围段：T 型只拆被接触的一面，自由面整墙一个范围', () => {
+  // 默认户型拓扑：客厅带门横墙 w5（0,3.5→8,3.5），竖墙 w6 从南侧（卧室侧）接入
+  const walls = [
+    ...square(),
+    { id: 'w5', start: [0, 3.5], end: [8, 3.5], height: 2.8, thickness: 0.2 },
+    { id: 'w6', start: [4, 0], end: [4, 3.5], height: 2.8, thickness: 0.2 },
+  ];
+  const w5segs = segsOf(walls, 'w5');
+  assert.equal(w5segs.length, 2);
+  // 客厅侧（B 面，未被 w6 接触）：沿墙房间不变 → 整面一个范围
+  const living = faceSegOf(w5segs, 1, 0.25);
+  assert.ok(Math.abs(living.t0 - 0) < 1e-9 && Math.abs(living.t1 - 1) < 1e-9);
+  // 卧室侧（A 面，被 w6 接触）：房间在接入点变化 → 两段，边界在 stem 中心线
+  const bedL = faceSegOf(w5segs, 0, 0.25);
+  const bedR = faceSegOf(w5segs, 0, 0.75);
+  assert.ok(Math.abs(bedL.t0 - 0) < 1e-9 && Math.abs(bedL.t1 - 0.5) < 1e-9);
+  assert.ok(Math.abs(bedR.t0 - 0.5) < 1e-9 && Math.abs(bedR.t1 - 1) < 1e-9);
+  assert.equal(bedR.index, 1);
+  // 切点归右侧（与 segOfNode 一致）
+  assert.equal(faceSegOf(w5segs, 0, 0.5).index, 1);
+  // stem 墙两面都保持整段
+  const w6segs = segsOf(walls, 'w6');
+  for (const face of [0, 1]) {
+    const s = faceSegOf(w6segs, face, 0.5);
+    assert.ok(Math.abs(s.t0 - 0) < 1e-9 && Math.abs(s.t1 - 1) < 1e-9);
+  }
+  // 外墙 w1：w6 起点落在其墙身 → 室内侧拆分，外侧（自由面）整墙
+  const w1segs = segsOf(walls, 'w1');
+  const outer = faceSegOf(w1segs, 0, 0.75);
+  assert.ok(Math.abs(outer.t0 - 0) < 1e-9 && Math.abs(outer.t1 - 1) < 1e-9);
+  assert.ok(Math.abs(faceSegOf(w1segs, 1, 0.25).t1 - 0.5) < 1e-9);
+});
+
+test('面范围段：X 型交叉两面都在交点拆分', () => {
+  const walls = [
+    ...square(),
+    { id: 'w5', start: [4, 0], end: [4, 6], height: 2.8, thickness: 0.2 },
+    { id: 'w6', start: [0, 3], end: [8, 3], height: 2.8, thickness: 0.2 },
+  ];
+  const w5segs = segsOf(walls, 'w5');
+  assert.equal(w5segs.length, 2);
+  for (const face of [0, 1]) {
+    const left = faceSegOf(w5segs, face, 0.25);
+    const right = faceSegOf(w5segs, face, 0.75);
+    assert.ok(Math.abs(left.t1 - 0.5) < 1e-9, `face ${face} 左段应止于交点`);
+    assert.ok(Math.abs(right.t0 - 0.5) < 1e-9, `face ${face} 右段应起于交点`);
+  }
+});
+
+test('面范围段：死端短墙不改变房间归属，宿主两面都整墙', () => {
+  const walls = [...square(), { id: 'stub', start: [2, 0], end: [2, 2], height: 2.8, thickness: 0.2 }];
+  const w1segs = segsOf(walls, 'w1');
+  assert.equal(w1segs.length, 1);
+  for (const face of [0, 1]) {
+    const s = faceSegOf(w1segs, face, 0.4);
+    assert.ok(Math.abs(s.t0 - 0) < 1e-9 && Math.abs(s.t1 - 1) < 1e-9);
+  }
+});
+
+test('面范围段：同侧房间相同的相邻段合并，异侧保留；空段返回 null', () => {
+  const segs = [
+    { id: 'x#0', wallId: 'x', index: 0, t0: 0, t1: 0.4, left: 'R1', right: 'R2' },
+    { id: 'x#1', wallId: 'x', index: 1, t0: 0.4, t1: 0.7, left: 'R1', right: 'R3' },
+    { id: 'x#2', wallId: 'x', index: 2, t0: 0.7, t1: 1, left: 'R4', right: 'R3' },
+  ];
+  // A 面 left：R1|R1|R4 → [0,0.7] + [0.7,1]
+  const a0 = faceSegOf(segs, 0, 0.5);
+  assert.ok(Math.abs(a0.t0 - 0) < 1e-9 && Math.abs(a0.t1 - 0.7) < 1e-9 && a0.index === 0);
+  const a1 = faceSegOf(segs, 0, 0.85);
+  assert.ok(Math.abs(a1.t0 - 0.7) < 1e-9 && Math.abs(a1.t1 - 1) < 1e-9 && a1.index === 1);
+  // B 面 right：R2|R3|R3 → [0,0.4] + [0.4,1]；切点归右
+  const b0 = faceSegOf(segs, 1, 0.2);
+  assert.ok(Math.abs(b0.t1 - 0.4) < 1e-9 && b0.index === 0);
+  const b1 = faceSegOf(segs, 1, 0.4);
+  assert.ok(Math.abs(b1.t0 - 0.4) < 1e-9 && Math.abs(b1.t1 - 1) < 1e-9 && b1.index === 1);
+  // 外侧面（null 房间）同样合并
+  const outer = [
+    { id: 'y#0', wallId: 'y', index: 0, t0: 0, t1: 0.5, left: null, right: 'A' },
+    { id: 'y#1', wallId: 'y', index: 1, t0: 0.5, t1: 1, left: null, right: 'B' },
+  ];
+  const whole = faceSegOf(outer, 0, 0.9);
+  assert.ok(Math.abs(whole.t0 - 0) < 1e-9 && Math.abs(whole.t1 - 1) < 1e-9);
+  // pos 超界 clamp；空段 null
+  assert.ok(Math.abs(faceSegOf(segs, 0, 2).t1 - 1) < 1e-9);
+  assert.equal(faceSegOf([], 0, 0.5), null);
+  assert.equal(faceSegOf(null, 0, 0.5), null);
 });
 
 test('wallface：open 带段参数时只显示该段内的节点，段内米制映射正确', () => {

@@ -4,7 +4,7 @@ import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
-  buildWallSegments, segmentsForWall, segOfNode, wirePathPoints,
+  buildWallSegments, segmentsForWall, faceSegOf, wirePathPoints,
 } from './model.js';
 import { buildWallShell, locateWall, exposedFaceSpans } from './wallgeometry.js';
 
@@ -485,12 +485,13 @@ export class Scene3D {
         if (!loc) continue;
         result.id = loc.wall.id;
         result.face = loc.face;
-        // 命中点投影到墙线得 0~1 坐标，定位所属逻辑墙段（派生拆分）
+        // 命中点投影到墙线得 0~1 坐标，按命中面取"面范围段"：T/X 拆分只作用于
+        // 被接触的一面（该侧房间变化处拆分），未接触的一面整面一个范围
         const L = wallLen(loc.wall);
         if (L > 1e-9) {
           const [dx, dz] = wallDir(loc.wall);
           const t01 = ((hit.point.x - loc.wall.start[0]) * dx + (hit.point.z - loc.wall.start[1]) * dz) / L;
-          result.seg = segOfNode(segmentsForWall(this.wallSegments, loc.wall.id), Math.min(1, Math.max(0, t01)));
+          result.seg = faceSegOf(segmentsForWall(this.wallSegments, loc.wall.id), loc.face, Math.min(1, Math.max(0, t01)));
         }
       }
       if (ud.kind === 'room') {

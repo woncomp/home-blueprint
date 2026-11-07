@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, wallPickableInView, BREAKER_BOX_SIZE } from './model.js';
+import { createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, BREAKER_BOX_SIZE } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -107,7 +107,7 @@ function setMode(mode) {
   document.getElementById('plan-tools').classList.toggle('hidden', mode !== 'plan');
   document.getElementById('overlay-hint').firstElementChild.textContent =
     mode === 'view'
-      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击有电路的墙面展开 2D'
+      ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D'
       : mode === 'edit'
         ? 'WASD 平移视点 · 左键拖动旋转 · 滚轮缩放 · 点击墙上对象选中 · 点击墙面展开 2D 编辑'
         : '滚轮缩放 · 空白处拖动平移 · 单击选中，拖动墙身/端点编辑 · 按住 Alt 关闭吸附 · Esc 取消';
@@ -257,13 +257,6 @@ function syncTerminals() {
 // ---------- 3D 画布交互 ----------
 let mouseDownPos = null;
 
-// 查看模式下：没有任何电路且不是强电箱所在墙的墙不可展开 2D、也没有 hover 预览。
-// 拾取资格按原始整墙判断，与命中的是哪个逻辑段无关；展开与高亮仍按命中段进行
-function hitPickable(hit) {
-  if (app.mode !== 'view' || hit.kind !== 'wall') return true;
-  return wallPickableInView(app.data, scene3d.circuits, hit.id);
-}
-
 canvas.addEventListener('mousedown', e => {
   mouseDownPos = { x: e.clientX, y: e.clientY };
   // 强电箱拖动（特殊设备节点）
@@ -294,7 +287,7 @@ window.addEventListener('mousemove', e => {
     scene3d.updateData(app.data);
   } else if (!wallface.isOpen() && app.mode !== 'plan' && e.buttons === 0) {
     const hit = scene3d.pick(e.clientX, e.clientY);
-    scene3d.setHover(hit && hitPickable(hit) && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
+    scene3d.setHover(hit && ['wall', 'node', 'wire'].includes(hit.kind) ? hit : null);
   }
 });
 
@@ -315,9 +308,9 @@ window.addEventListener('mouseup', e => {
 
 function handleCanvasClick(e) {
   if (wallface.isOpen() || app.mode === 'plan') return;
-  const rawHit = scene3d.pick(e.clientX, e.clientY);
-  const hit = rawHit && hitPickable(rawHit) ? rawHit : null;
-  // 点击墙面 → 直接展开该面 2D 视图（带逻辑墙段，被拆分的墙按段展开）
+  const hit = scene3d.pick(e.clientX, e.clientY);
+  // 点击墙面 → 直接展开该面 2D 视图（面范围段：T/X 拆分只作用于被接触的一面，
+  // 未被接触的一面整面一个范围，可整墙展开）
   if (hit && hit.kind === 'wall') {
     scene3d.setHover(null);
     wallface.open(app.data, hit.id, hit.face, app.mode, hit.seg);
