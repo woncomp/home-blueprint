@@ -6,7 +6,7 @@ import {
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
   buildWallSegments, segmentsForWall, segOfNode, wirePathPoints,
 } from './model.js';
-import { buildWallShell, locateWall } from './wallgeometry.js';
+import { buildWallShell, locateWall, exposedFaceSpans } from './wallgeometry.js';
 
 const ROOM_COLORS = ['#e8f0e3', '#e3ecf5', '#f5eee3', '#f0e3f5', '#e3f5f0', '#f5e3e8'];
 
@@ -123,6 +123,7 @@ export class Scene3D {
     this._hoverKey = null;
     this._hovered = [];
     this._pickables = [];
+    this._spanCache = null;
 
     const { rooms, segRooms } = detectRooms(this.data.walls);
     this.rooms = rooms;
@@ -237,33 +238,57 @@ export class Scene3D {
     }
   }
 
-  // 墙面单面预览：只画边缘矩形框；seg 存在时只画该逻辑墙段范围
+  // 墙面单面预览：只画边缘矩形框；seg 存在时只画该逻辑墙段范围。
+  // 框宽按 exposedFaceSpans 裁剪到实际露出的墙面：T/L 接头处不再画进被邻墙压住的区段，
+  // 自由端恰好止于墙端（不多悬空半墙厚）；露出区间在段边界处首尾相接，相邻段线框无缝。
   makeFaceOutline(wall, face, color, seg) {
     const len = wallLen(wall);
-    const t0 = seg ? seg.t0 : 0, t1 = seg ? seg.t1 : 1;
-    const segLen = (t1 - t0) * len;
-    const mid = (t0 + t1) / 2 * len;
     const h = wall.height || 2.8;
     const t = wall.thickness || 0.2;
-    const hw = (segLen + t) / 2, hh = h / 2;
-    const geo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-hw, -hh, 0),
-      new THREE.Vector3(hw, -hh, 0),
-      new THREE.Vector3(hw, hh, 0),
-      new THREE.Vector3(-hw, hh, 0),
-    ]);
-    const mat = new THREE.LineBasicMaterial({ color });
-    const frame = new THREE.LineLoop(geo, mat);
     const [dx, dz] = wallDir(wall);
     const [nx, nz] = wallNormal(wall, face);
-    frame.position.set(
-      wall.start[0] + dx * mid + nx * (t / 2 + 0.005),
-      h / 2,
-      wall.start[1] + dz * mid + nz * (t / 2 + 0.005),
-    );
-    frame.rotation.y = Math.atan2(nx, nz);
-    frame.userData.noPick = true;
-    return frame;
+    const group = new THREE.Group();
+
+    const mkFrame = (u0, u1) => {
+      const mid = (u0 + u1) / 2, hw = (u1 - u0) / 2, hh = h / 2;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-hw, -hh, 0),
+        new THREE.Vector3(hw, -hh, 0),
+        new THREE.Vector3(hw, hh, 0),
+        new THREE.Vector3(-hw, hh, 0),
+      ]);
+      const frame = new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color }));
+      frame.position.set(
+        wall.start[0] + dx * mid + nx * (t / 2 + 0.005),
+        h / 2,
+        wall.start[1] + dz * mid + nz * (t / 2 + 0.005),
+      );
+      frame.rotation.y = Math.atan2(nx, nz);
+      frame.userData.noPick = true;
+      return frame;
+    };
+
+    const u0 = seg ? seg.t0 * len : 0, u1 = seg ? seg.t1 * len : len;
+    let drew = false;
+    for (const [a, b] of this._faceSpans(wall, face)) {
+      const lo = Math.max(a, u0), hi = Math.min(b, u1);
+      if (hi - lo < 0.01) continue;
+      group.add(mkFrame(lo, hi));
+      drew = true;
+    }
+    if (!drew) group.add(mkFrame(u0, u1)); // 防御：无露出数据时回退整段
+    group.userData.noPick = true;
+    return group;
+  }
+
+  // 悬停线框的露出区间缓存（key: wallId:face），rebuild 时随 _spanCache 清空
+  _faceSpans(wall, face) {
+    if (!this._spanCache) this._spanCache = new Map();
+    const key = wall.id + ':' + face;
+    if (!this._spanCache.has(key)) {
+      this._spanCache.set(key, exposedFaceSpans(this.data.walls, wall, face));
+    }
+    return this._spanCache.get(key);
   }
 
   // 悬停轻微高亮，提示对象可点击；墙面显示单面预览（点击展开 2D）
@@ -496,6 +521,7 @@ export class Scene3D {
 function clearGroup(g) {
   while (g.children.length) {
     const c = g.children.pop();
+    if (c.children && c.children.length) clearGroup(c); // 嵌套 Group（如悬停线框组）先清理内部
     if (c.geometry) c.geometry.dispose();
     if (c.material) {
       if (c.material.map) c.material.map.dispose();

@@ -426,6 +426,65 @@ export function buildWallShell(walls, doors = []) {
   return { positions, normals };
 }
 
+// 悬停高亮辅助：某面墙某一 face 上"露出来"的沿墙区间（米制，以 wall.start 为 u 原点，
+// 可略超出 [0,len]——L 拐角的相连端外延拐角方块算露出）。
+// 复用 computeWallCells 的平面 arrangement：墙实体单元在该 face 侧的外边界中，
+// 邻侧无实体单元（或邻侧更矮、上方台阶面仍露出）的边即露出的墙面；
+// 边端点投影到墙轴合并成区间。不传门洞：门洞不打断沿墙方向的露出跨度。
+export function exposedFaceSpans(walls, wall, face) {
+  const cells = computeWallCells(walls, []);
+  const solidH = cells.map(c => (c.y1 - c.y0 > EPS ? c.y1 : 0)); // 0 = 非实体，否则单元实体高度
+  // 边 → 相邻单元索引（与 buildWallShell 相同的 vkey 去重）
+  const edgeMap = new Map();
+  cells.forEach((cell, ci) => {
+    const poly = cell.polygon;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i], q = poly[(i + 1) % poly.length];
+      const k1 = vkey(p[0], p[1]), k2 = vkey(q[0], q[1]);
+      const key = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1;
+      let e = edgeMap.get(key);
+      if (!e) { e = { ax: p[0], az: p[1], bx: q[0], bz: q[1], cells: [] }; edgeMap.set(key, e); }
+      if (!e.cells.includes(ci)) e.cells.push(ci);
+    }
+  });
+
+  const dx = wall.end[0] - wall.start[0], dz = wall.end[1] - wall.start[1];
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-9) return [];
+  const d = [dx / len, dz / len];
+  const nA = [dz / len, -dx / len]; // A 面法线；face 0 = A 面 = +nA 侧
+  const side = face === 0 ? 1 : -1;
+  const uOf = (x, z) => (x - wall.start[0]) * d[0] + (z - wall.start[1]) * d[1];
+
+  const ivs = [];
+  for (const e of edgeMap.values()) {
+    for (let k = 0; k < e.cells.length; k++) {
+      const ci = e.cells[k];
+      if (solidH[ci] <= EPS || !cells[ci].walls.includes(wall)) continue;
+      // 邻侧有同高或更高的实体 → 该边被压住；更矮则上方仍露出
+      let covered = false;
+      for (let m = 0; m < e.cells.length; m++) {
+        if (m !== k && solidH[e.cells[m]] >= solidH[ci] - EPS) { covered = true; break; }
+      }
+      if (covered) continue;
+      // 边中点必须位于该 face 一侧
+      const mx = (e.ax + e.bx) / 2, mz = (e.az + e.bz) / 2;
+      const off = (mx - wall.start[0]) * nA[0] + (mz - wall.start[1]) * nA[1];
+      if (off * side <= 0) continue;
+      const ua = uOf(e.ax, e.az), ub = uOf(e.bx, e.bz);
+      ivs.push([Math.min(ua, ub), Math.max(ua, ub)]);
+    }
+  }
+  ivs.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const iv of ivs) {
+    const last = merged[merged.length - 1];
+    if (last && iv[0] - last[1] < 1e-3) last[1] = Math.max(last[1], iv[1]);
+    else merged.push(iv);
+  }
+  return merged;
+}
+
 // 拾取辅助：命中点 → 最近的墙与该墙的 face（与 wallNormal(wall, face) 语义一致，
 // 对顶盖/门楣底面命中同样稳健）。point 为 [x, y, z]。
 // hitNormal 为射线命中的世界法向（可选）：T/L 接头处命中点常同时落在多面墙的容差管内，
