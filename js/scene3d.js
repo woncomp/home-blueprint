@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
-  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox,
+  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
 } from './model.js';
 
 const ROOM_COLORS = ['#e8f0e3', '#e3ecf5', '#f5eee3', '#f0e3f5', '#e3f5f0', '#f5e3e8'];
@@ -323,7 +323,7 @@ export class Scene3D {
     const walls = this.wallsById();
     const wall = walls.get(box.wall);
     if (!wall) return;
-    const geo = new THREE.BoxGeometry(0.5, 0.7, 0.14);
+    const geo = new THREE.BoxGeometry(BREAKER_BOX_SIZE.w, BREAKER_BOX_SIZE.h, BREAKER_BOX_SIZE.d);
     const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(DEVICE_TYPES.breakerBox.color) });
     const mesh = new THREE.Mesh(geo, mat);
     const pos = nodeWorldPos({ wall: box.wall, face: box.face, pos: box.pos, height: box.height }, walls);

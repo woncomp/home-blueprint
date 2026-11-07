@@ -19,6 +19,9 @@ export const NODE_TYPE_NAMES = {
   device: '设备',
 };
 
+// 强电箱统一尺寸（米）：宽(沿墙) × 高 × 深(出墙)，各处渲染必须引用此常量
+export const BREAKER_BOX_SIZE = { w: 0.5, h: 0.7, d: 0.14 };
+
 let idCounter = 1;
 export function genId(prefix) {
   return `${prefix}${Date.now().toString(36)}_${(idCounter++).toString(36)}`;

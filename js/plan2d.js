@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH } from './model.js';
+import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -181,8 +181,8 @@ export class Plan2D {
       const wall = byId.get(box.wall);
       const [dx, dz] = wallDir(wall);
       const t2 = wall.thickness || 0.2;
-      // 小矩形示意：0.26m 长 × 墙厚+边距 宽
-      const hl = 0.13, off = t2 / 2 + 0.04;
+      // 顶视 footprint：沿墙长 = 箱体宽，跨墙宽 = 墙厚 + 箱深 + 边距（骑在墙面外侧）
+      const hl = BREAKER_BOX_SIZE.w / 2, off = t2 / 2 + BREAKER_BOX_SIZE.d / 2 + 0.02;
       const [nx, nz] = [dz, -dx];
       const c = [wall.start[0] + dx * box.pos, wall.start[1] + dz * box.pos];
       const pts = [

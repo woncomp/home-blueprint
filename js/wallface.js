@@ -2,7 +2,7 @@
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, createNode, createWire,
   addLink, removeLink, linksOf, computeCircuits,
-  DEVICE_TYPES, NODE_TYPE_NAMES, CIRCUIT_COLORS, findBreakerBox,
+  DEVICE_TYPES, NODE_TYPE_NAMES, CIRCUIT_COLORS, findBreakerBox, BREAKER_BOX_SIZE,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -144,8 +144,8 @@ export class WallFaceDialog {
   renderBreakerBox() {
     const box = findBreakerBox(this.data);
     if (!box || box.wall !== this.wallId || box.face !== this.face) return;
-    const bw = 0.55 * this.view.scale, bh = 0.75 * this.view.scale;
-    const bx = this.posX(box.pos - 0.275), by = this.heightY(box.height + 0.375);
+    const bw = BREAKER_BOX_SIZE.w * this.view.scale, bh = BREAKER_BOX_SIZE.h * this.view.scale;
+    const bx = this.posX(box.pos - BREAKER_BOX_SIZE.w / 2), by = this.heightY(box.height + BREAKER_BOX_SIZE.h / 2);
     const g = el('g', {});
     g.appendChild(el('rect', {
       x: bx, y: by, width: bw, height: bh,
