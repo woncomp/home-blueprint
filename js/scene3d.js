@@ -8,6 +8,9 @@ import {
 
 const ROOM_COLORS = ['#e8f0e3', '#e3ecf5', '#f5eee3', '#f0e3f5', '#e3f5f0', '#f5e3e8'];
 
+// 拾取代理半径：设备/电线本体细小不易点中，用隐形放大网格提高鼠标容错
+const PICK_RADIUS = { device: 0.13, point: 0.1, wire: 0.055, joint: 0.05 };
+
 export class Scene3D {
   constructor(canvas) {
     this.canvas = canvas;
@@ -51,6 +54,7 @@ export class Scene3D {
   resize() {
     const parent = this.canvas.parentElement;
     const w = parent.clientWidth, h = parent.clientHeight;
+    if (!w || !h) return; // 面板隐藏/尚未布局时跳过，避免相机宽高比变成 NaN
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -368,6 +372,9 @@ export class Scene3D {
         joint.userData = { kind: 'wire', id: wire.id };
         this.wireGroup.add(joint);
         this._pickables.push(joint);
+        const proxy = new THREE.Mesh(new THREE.SphereGeometry(PICK_RADIUS.joint, 8, 8));
+        proxy.position.copy(joint.position);
+        this.addPickProxy(proxy, { kind: 'wire', id: wire.id });
       }
     }
   }
@@ -383,6 +390,19 @@ export class Scene3D {
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
     mesh.userData = { kind: 'wire', id: wireId };
     this.wireGroup.add(mesh);
+    this._pickables.push(mesh);
+    // 隐形加粗代理，让细电线更容易被鼠标点中
+    const proxy = new THREE.Mesh(new THREE.CylinderGeometry(PICK_RADIUS.wire, PICK_RADIUS.wire, len, 6));
+    proxy.position.copy(mesh.position);
+    proxy.quaternion.copy(mesh.quaternion);
+    this.addPickProxy(proxy, { kind: 'wire', id: wireId });
+  }
+
+  // 隐形拾取代理：不加入渲染场景（无 GPU 资源），只进拾取列表
+  addPickProxy(mesh, userData) {
+    mesh.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    mesh.updateMatrixWorld(true); // 代理无父节点，需手动刷新矩阵
+    mesh.userData = userData;
     this._pickables.push(mesh);
   }
 
@@ -413,6 +433,9 @@ export class Scene3D {
         mesh.userData = { kind: 'node', id: node.id };
         this.nodeGroup.add(mesh);
         this._pickables.push(mesh);
+        const proxy = new THREE.Mesh(new THREE.SphereGeometry(PICK_RADIUS.device, 8, 8));
+        proxy.position.set(pos[0], pos[1], pos[2]);
+        this.addPickProxy(proxy, { kind: 'node', id: node.id });
         if (node.label) {
           // 说明文字用贴在墙面上的薄贴牌表示，不用悬浮文字
           const pgeo = new THREE.BoxGeometry(0.14, 0.09, 0.012);
@@ -433,6 +456,9 @@ export class Scene3D {
         mesh.userData = { kind: 'node', id: node.id };
         this.nodeGroup.add(mesh);
         this._pickables.push(mesh);
+        const proxy = new THREE.Mesh(new THREE.SphereGeometry(PICK_RADIUS.point, 8, 8));
+        proxy.position.set(pos[0], pos[1], pos[2]);
+        this.addPickProxy(proxy, { kind: 'node', id: node.id });
       }
     }
   }
