@@ -205,6 +205,15 @@ export function wallNormal(wall, face) {
   return face === 0 ? [dz, -dx] : [-dz, dx];
 }
 
+// 门洞与墙段的交集（均为沿墙米制）：段 [t0·L, t1·L]（t0/t1 为整墙 0~1，null 视为整墙），
+// 门 [pos−w/2, pos+w/2]；相交返回裁剪后的 [a, b]，不相交返回 null
+export function clipDoorToSeg(door, t0, t1, L) {
+  const segA = (t0 || 0) * L, segB = (t1 == null ? 1 : t1) * L;
+  const a = Math.max(door.pos - door.width / 2, segA);
+  const b = Math.min(door.pos + door.width / 2, segB);
+  return b - a > 1e-9 ? [a, b] : null;
+}
+
 // 节点在世界坐标中的位置（墙面上的点）；node.pos 为沿墙 0~1 归一化坐标
 export function nodeWorldPos(node, wallsById) {
   const wall = wallsById.get(node.wall);

@@ -6,6 +6,7 @@ import {
   addLink, removeLink, linksOf, computeCircuits,
   detectRooms, buildWallSegments, adjacentWallViews,
   DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE, BREAKER_SIDE_INSET, breakerTerminalHeight,
+  clipDoorToSeg, DOOR_DEFAULT_HEIGHT,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -31,6 +32,7 @@ export class WallFaceDialog {
     this.linkPending = null;
     this.selectedNodeId = null;
     this.selectedWireId = null;
+    this.selectedDoorId = null;
     this.dragging = null;
     this.snapGuideH = null;
     this.views = null;      // 三墙视图记录（render 时计算）
@@ -49,6 +51,15 @@ export class WallFaceDialog {
     window.addEventListener('mousemove', e => this.onSvgMouseMove(e));
     window.addEventListener('mouseup', e => this.onSvgMouseUp(e));
     this.svg.addEventListener('mousemove', e => this.onSvgHover(e));
+    window.addEventListener('keydown', e => {
+      if (!this.isOpen()) return;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      if ((e.code === 'Delete' || e.code === 'Backspace') && this.selectedDoorId) {
+        const id = this.selectedDoorId;
+        this.selectedDoorId = null;
+        if (this.cbs.onDeleteDoor) this.cbs.onDeleteDoor(id);
+      }
+    });
     window.addEventListener('resize', () => {
       if (this.isOpen()) {
         this._centerPending = true; // 视口变化后槽位重排，重新把当前墙居中
@@ -66,6 +77,7 @@ export class WallFaceDialog {
     this.seg = seg && seg.wallId === wallId ? { id: seg.id, wallId, index: seg.index, t0: seg.t0, t1: seg.t1 } : null;
     this.selectedNodeId = null;
     this.selectedWireId = null;
+    this.selectedDoorId = null;
     this.dragging = null;
     this.snapGuideH = null;
     this.wallSegments = null;
@@ -254,6 +266,7 @@ export class WallFaceDialog {
     this.svg.setAttribute('height', Math.round(this.svgH));
 
     for (const v of this.views) this.renderPanel(v);
+    for (const v of this.views) this.renderDoors(v);
     this.renderWires();
     for (const v of this.views) {
       this.renderBreakerBox(v);
@@ -366,6 +379,52 @@ export class WallFaceDialog {
     }
   }
 
+  // 门洞：白色挖空 + 门框描边 + 门扇开启线（朝本面开实线、背向虚线；铰链在门洞起始侧，与 3D 一致）
+  renderDoors(v) {
+    const doors = (this.data.doors || []).filter(d => d.wall === v.wallId);
+    if (!doors.length) return;
+    const L = wallLen(v.wall);
+    for (const door of doors) {
+      const clipped = clipDoorToSeg(door, v.seg ? v.seg.t0 : null, v.seg ? v.seg.t1 : null, L);
+      if (!clipped) continue;
+      const [a, b] = clipped;
+      const xa = this.posX(v, a), xb = this.posX(v, b);
+      const w = Math.abs(xb - xa);
+      if (w < 0.5) continue; // 段内残余不足 0.5px 不画
+      const x = Math.min(xa, xb);
+      const top = this.heightY(Math.min(door.height ?? DOOR_DEFAULT_HEIGHT, v.h));
+      const isSel = this.selectedDoorId === door.id;
+      const g = el('g', {});
+      const opening = el('rect', {
+        x, y: top, width: w, height: this.floorY - top,
+        fill: '#fdfdf8', stroke: isSel ? '#4a90d9' : '#8a6f4d',
+        'stroke-width': isSel ? 2.5 : 1.5, class: 'wf-door',
+        'data-doorid': door.id,
+      });
+      // 选择工具下点击门洞 = 选中门（其他工具保持原有冒泡行为）
+      opening.addEventListener('mousedown', e => {
+        if (this.tool !== 'select') return;
+        e.stopPropagation();
+        this.selectedDoorId = door.id;
+        this.selectedNodeId = null;
+        this.selectedWireId = null;
+        this.render();
+        if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'door', id: door.id });
+      });
+      g.appendChild(opening);
+      // 门扇开启线：铰链侧门楣角 → 对侧地面
+      const hingeX = this.posX(v, clamp(door.pos - door.width / 2, a, b));
+      const farX = this.posX(v, clamp(door.pos + door.width / 2, a, b));
+      const toward = (door.face || 0) === v.face;
+      g.appendChild(el('line', {
+        x1: hingeX, y1: top, x2: farX, y2: this.floorY,
+        stroke: '#8a6f4d', 'stroke-width': 1.2, 'pointer-events': 'none',
+        ...(toward ? {} : { 'stroke-dasharray': '5 4' }),
+      }));
+      this.svg.appendChild(g);
+    }
+  }
+
   renderBreakerBox(v) {
     const box = findBreakerBox(this.data);
     if (!box || box.wall !== v.wallId || box.face !== v.face || !this.inSegV(v, box)) return;
@@ -421,6 +480,7 @@ export class WallFaceDialog {
       e.stopPropagation();
       this.selectedNodeId = box.id;
       this.selectedWireId = null;
+      this.selectedDoorId = null;
       this.render();
       if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: box.id });
     });
@@ -508,6 +568,7 @@ export class WallFaceDialog {
           } else {
             this.selectedWireId = wire.id;
             this.selectedNodeId = null;
+            this.selectedDoorId = null;
             if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'wire', id: wire.id });
             this.renderInfo();
           }
@@ -628,6 +689,7 @@ export class WallFaceDialog {
     this.seg = v.seg ? { id: v.seg.id, wallId: v.seg.wallId, index: v.seg.index, t0: v.seg.t0, t1: v.seg.t1 } : null;
     this.selectedNodeId = null;
     this.selectedWireId = null;
+    this.selectedDoorId = null;
     this.wirePending = null;
     this.linkPending = null;
     this.dragging = null;
@@ -645,6 +707,7 @@ export class WallFaceDialog {
     const view = this.views ? this.viewOfNode(node) : null;
     if (this.mode !== 'edit') {
       this.selectedNodeId = nodeId;
+      this.selectedDoorId = null;
       if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: nodeId });
       this.render();
       return;
@@ -683,6 +746,7 @@ export class WallFaceDialog {
     // select：选中并开始拖动（仅当前墙可拖动）
     this.selectedNodeId = nodeId;
     this.selectedWireId = null;
+    this.selectedDoorId = null;
     if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: nodeId });
     if (view && view.role !== 'active') {
       this.dragging = null;
@@ -731,6 +795,7 @@ export class WallFaceDialog {
     } else if (this.tool === 'select') {
       this.selectedNodeId = null;
       this.selectedWireId = null;
+      this.selectedDoorId = null;
       this.renderInfo();
     }
   }

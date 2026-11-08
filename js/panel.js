@@ -201,8 +201,8 @@ export class Panel {
       p.style.marginTop = '6px';
       p.textContent = '修改长度保持墙的方向与起点不变；拖动墙身平移，拖动端点/交点调整形状。';
       wrap.appendChild(p);
-    } else if (selection.kind === 'door' && this.mode === 'plan') {
-      // 户型编辑：门宽可编辑，开门方向可翻面；不显示电路相关操作
+    } else if (selection.kind === 'door') {
+      // 户型编辑/墙面展开：门宽可编辑，开门方向可翻面；不显示电路相关操作
       const door = (data.doors || []).find(d => d.id === selection.id);
       if (!door) return;
       const title = document.createElement('div');
@@ -229,7 +229,9 @@ export class Panel {
       const p = document.createElement('p');
       p.className = 'placeholder';
       p.style.marginTop = '6px';
-      p.textContent = '顶视图中拖动门沿墙移动，靠近其他墙可换墙；Delete 删除。';
+      p.textContent = this.mode === 'plan'
+        ? '顶视图中拖动门沿墙移动，靠近其他墙可换墙；Delete 删除。'
+        : '墙面展开视图中点击门洞可选中；Delete 删除，移动/换墙请在户型编辑中拖动。';
       wrap.appendChild(p);
     } else if (selection.kind === 'wire') {
       const wire = data.wires.find(w => w.id === selection.id);

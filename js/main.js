@@ -25,6 +25,7 @@ const wallface = new WallFaceDialog({
   onChange: refresh,
   onSelect: sel => { app.selection = sel; scene3d.setSelection(sel); refreshPanel(); },
   onNotify: toast,
+  onDeleteDoor: id => deleteDoorById(id),
   onClose: () => {},
 });
 const plan2d = new Plan2D({
@@ -59,6 +60,8 @@ function refresh() {
   refreshPanel();
   refreshToolbar();
   plan2d.refresh();
+  // 面板等外部编辑同样刷新已打开的墙面展开视图
+  if (wallface.isOpen()) wallface.render();
 }
 
 function refreshPanel() {
@@ -66,7 +69,7 @@ function refreshPanel() {
 }
 
 function refreshToolbar() {
-  const isDeletable = app.selection && ['node', 'wire'].includes(app.selection.kind);
+  const isDeletable = app.selection && ['node', 'wire', 'door'].includes(app.selection.kind);
   document.getElementById('btn-delete-entity').disabled = !(app.mode === 'edit' && isDeletable);
   document.getElementById('edit-hint').textContent =
     app.mode === 'edit' ? '点击墙面展开 2D 视图编辑电路；选中强电箱后可沿墙拖动' : '';
@@ -211,6 +214,7 @@ function deleteSelectedEntity() {
   const sel = app.selection;
   if (!sel) return;
   if (sel.kind === 'node') deleteNodeById(sel.id);
+  else if (sel.kind === 'door') deleteDoorById(sel.id);
   else if (sel.kind === 'wire') {
     app.data.wires = app.data.wires.filter(w => w.id !== sel.id);
     app.selection = null;
@@ -243,6 +247,7 @@ function deleteDoorById(id) {
     app.selection = null;
     plan2d.setSelection(null);
   }
+  if (wallface.isOpen() && wallface.selectedDoorId === id) wallface.selectedDoorId = null;
   refresh();
   toast('门已删除');
 }
