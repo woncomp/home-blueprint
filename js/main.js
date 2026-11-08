@@ -19,6 +19,7 @@ const app = {
   selection: null,
   draggingBox: false,
 };
+let planHint = '';     // 户型编辑当前操作提示（Plan2D 生成，右侧信息面板无选择时展示）
 
 const panel = new Panel(dataProvider);
 const wallface = new WallFaceDialog({
@@ -35,13 +36,12 @@ const plan2d = new Plan2D({
     ortho: document.getElementById('plan-tool-ortho'),
     free: document.getElementById('plan-tool-free'),
     door: document.getElementById('plan-tool-door'),
-    del: document.getElementById('plan-tool-delete'),
     fit: document.getElementById('plan-fit'),
   },
-  hintEl: document.getElementById('plan-hint'),
   dataProvider,
   onChange: refresh,
   onSelect: sel => { app.selection = sel; scene3d.setSelection(sel); refreshPanel(); refreshToolbar(); },
+  onHint: text => { planHint = text; if (app.mode === 'plan') refreshPanel(); },
   onNotify: toast,
   onDeleteWall: deleteWallById,
   onDeleteDoor: deleteDoorById,
@@ -65,7 +65,7 @@ function refresh() {
 }
 
 function refreshPanel() {
-  panel.update(app.data, scene3d.circuits, app.selection, app.mode, scene3d.rooms);
+  panel.update(app.data, scene3d.circuits, app.selection, app.mode, scene3d.rooms, planHint);
 }
 
 function refreshToolbar() {
@@ -131,7 +131,6 @@ document.getElementById('plan-tool-select').addEventListener('click', () => plan
 document.getElementById('plan-tool-ortho').addEventListener('click', () => plan2d.setTool('ortho'));
 document.getElementById('plan-tool-free').addEventListener('click', () => plan2d.setTool('free'));
 document.getElementById('plan-tool-door').addEventListener('click', () => plan2d.setTool('door'));
-document.getElementById('plan-tool-delete').addEventListener('click', () => plan2d.setTool('delete'));
 document.getElementById('plan-fit').addEventListener('click', () => plan2d.fitView());
 document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
 document.getElementById('chk-room-label-floor').addEventListener('change', e => {
@@ -191,6 +190,8 @@ panel.on('deleteWire', id => {
   refresh();
 });
 panel.on('deleteNode', id => deleteNodeById(id));
+// 选中墙后在信息面板删除：复用独立删除函数，保留强电箱墙限制与级联清理
+panel.on('deleteWall', id => deleteWallById(id));
 
 // ---------- 删除操作 ----------
 function deleteNodeById(id) {

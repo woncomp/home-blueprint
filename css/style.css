@@ -89,6 +89,9 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 #entity-panel { flex: 1; padding: 10px; overflow-y: auto; }
 #sidebar h3 { font-size: 14px; margin-bottom: 8px; color: #333; }
 .placeholder { color: #999; font-size: 12px; }
+/* 户型编辑“信息”面板中的操作提示（选择工具默认说明 / 当前添加工具与画墙阶段） */
+.plan-hint { color: #555; font-size: 12px; line-height: 1.7; }
+.plan-hint p { margin: 0 0 6px; }
 
 .breaker-item {
   display: flex; align-items: center; gap: 8px;

@@ -15,9 +15,10 @@ export class Panel {
   on(event, cb) { this.cbs[event] = cb; }
   emit(event, arg) { if (this.cbs[event]) this.cbs[event](arg); }
 
-  update(data, circuits, selection, mode, rooms) {
+  update(data, circuits, selection, mode, rooms, planHint) {
     this.mode = mode || 'view';
     this.rooms = rooms || [];
+    this.planHint = planHint || '';
     this.renderBreakerBox(data, circuits);
     this.renderEntity(data, circuits, selection);
   }
@@ -135,9 +136,21 @@ export class Panel {
   renderEntity(data, circuits, selection) {
     this.entityInfoEl.innerHTML = '';
     if (!selection) {
-      this.entityInfoEl.innerHTML = this.mode === 'plan'
-        ? '<p class="placeholder">在顶视图中点击墙、门或房间地面查看详情</p>'
-        : '<p class="placeholder">点击 3D 场景中的电线、设备或端点查看详情</p>';
+      if (this.mode === 'plan') {
+        // 户型编辑无选择：显示当前工具/画墙阶段的操作提示（文案由 Plan2D 按状态统一生成）
+        const box = document.createElement('div');
+        box.className = 'plan-hint';
+        const segs = this.planHint.split('；').map(s => s.trim()).filter(Boolean);
+        if (!segs.length) segs.push('在顶视图中点击墙、门或房间地面查看详情');
+        for (const s of segs) {
+          const p = document.createElement('p');
+          p.textContent = s;
+          box.appendChild(p);
+        }
+        this.entityInfoEl.appendChild(box);
+      } else {
+        this.entityInfoEl.innerHTML = '<p class="placeholder">点击 3D 场景中的电线、设备或端点查看详情</p>';
+      }
       return;
     }
     const wrap = document.createElement('div');
@@ -201,6 +214,12 @@ export class Panel {
       p.style.marginTop = '6px';
       p.textContent = '修改长度保持墙的方向与起点不变；拖动墙身平移，拖动端点/交点调整形状。';
       wrap.appendChild(p);
+      const delWall = document.createElement('button');
+      delWall.className = 'tool-btn danger';
+      delWall.style.marginTop = '8px';
+      delWall.textContent = '删除墙';
+      delWall.addEventListener('click', () => this.emit('deleteWall', wall.id));
+      wrap.appendChild(delWall);
     } else if (selection.kind === 'door') {
       // 户型编辑/墙面展开：门宽可编辑，开门方向可翻面；不显示电路相关操作
       const door = (data.doors || []).find(d => d.id === selection.id);

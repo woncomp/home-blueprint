@@ -33,8 +33,8 @@ function projOnSeg(p, a, b) {
 function round1(v) { return Math.round(v * 10) / 10; }
 
 export class Plan2D {
-  // opts: { svg, tools: {select, ortho, free, door, del, fit}, hintEl,
-  //         dataProvider, onChange, onSelect, onNotify, onDeleteWall, onDeleteDoor, onWallAdded }
+  // opts: { svg, tools: {select, ortho, free, door, fit},
+  //         dataProvider, onChange, onSelect, onHint, onNotify, onDeleteWall, onDeleteDoor, onWallAdded }
   constructor(opts) {
     Object.assign(this, opts);
     this.active = false;
@@ -329,7 +329,7 @@ export class Plan2D {
     this.drawP1 = null; this.previewP2 = null;
     for (const [name, btn] of Object.entries({
       select: this.tools.select, ortho: this.tools.ortho, free: this.tools.free,
-      door: this.tools.door, delete: this.tools.del,
+      door: this.tools.door,
     })) {
       btn.classList.toggle('active-tool', name === tool);
     }
@@ -338,21 +338,20 @@ export class Plan2D {
     this.render();
   }
 
+  // 提示文案按工具状态统一生成，经 onHint 交给主程序，由右侧“信息”面板在无选择时展示
   updateHint() {
     const hints = {
       select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；拖动房间名称可调整其位置；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
       ortho: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '正交画墙：点击起点（自动锁定水平/竖直，Alt 关闭吸附）',
       free: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '任意画墙：点击起点（可任意角度，Alt 关闭吸附）',
-      door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；可连续添加，Esc 退出',
-      delete: '单击要删除的墙（强电箱所在墙不可删除）',
+      door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；Esc 退出',
     };
-    this.hintEl.textContent = hints[this.tool] || '';
+    if (this.onHint) this.onHint(hints[this.tool] || '');
   }
 
   updateCursor() {
     let c = 'default';
     if (this.tool === 'ortho' || this.tool === 'free' || this.tool === 'door') c = 'crosshair';
-    else if (this.tool === 'delete') c = 'not-allowed';
     else if (this.drag && this.drag.type === 'pan') c = 'grabbing';
     else if (this.drag && this.drag.type === 'roomLabel') c = 'move';
     else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door' || this.hover.type === 'room') ? 'pointer' : 'move';
@@ -664,6 +663,8 @@ export class Plan2D {
       t = Math.max(hw, Math.min(wallLen(wall) - hw, t));
       const door = createDoor(wall.id, t);
       this.data().doors.push(door);
+      // 单次添加：先回到选择工具，再选中新门，避免工具切换覆盖最终选择
+      this.setTool('select');
       this.onChange();
       this.onNotify('门已添加');
       this.selectDoor(door.id);
@@ -680,11 +681,6 @@ export class Plan2D {
       }
       this.render();
       return;
-    }
-
-    if (this.tool === 'delete') {
-      const wall = this.pickWall(w);
-      if (wall) this.onDeleteWall(wall.id);
     }
   }
 
@@ -940,6 +936,7 @@ export class Plan2D {
   commitWall(p1, p2) {
     const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
     if (len < MIN_WALL) {
+      // 未创建不算成功添加：保持当前工具，仅清除本次起点/预览，便于重新开始
       this.onNotify(`墙太短（< ${MIN_WALL}m），未创建`, true);
       this.drawP1 = null; this.previewP2 = null;
       this.updateHint();
@@ -949,7 +946,7 @@ export class Plan2D {
     this.data().walls.push(wall);
     this.drawP1 = null; this.previewP2 = null;
     this.onWallAdded(wall);   // 首堵墙自动在中点放置强电箱
-    this.updateHint();
+    this.setTool('select');   // 单次画墙：成功创建后回到选择工具
     this.onChange();
     this.onNotify('墙已添加');
   }
