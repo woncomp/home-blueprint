@@ -384,11 +384,12 @@ export class WallFaceDialog {
     const doors = (this.data.doors || []).filter(d => d.wall === v.wallId);
     if (!doors.length) return;
     const L = wallLen(v.wall);
+    const segA = (v.seg ? v.seg.t0 : 0) * L; // 段起点整墙米制偏移（clipDoorToSeg 返回值需减去它才是段内米制）
     for (const door of doors) {
       const clipped = clipDoorToSeg(door, v.seg ? v.seg.t0 : null, v.seg ? v.seg.t1 : null, L);
       if (!clipped) continue;
       const [a, b] = clipped;
-      const xa = this.posX(v, a), xb = this.posX(v, b);
+      const xa = this.posX(v, a - segA), xb = this.posX(v, b - segA);
       const w = Math.abs(xb - xa);
       if (w < 0.5) continue; // 段内残余不足 0.5px 不画
       const x = Math.min(xa, xb);
@@ -413,8 +414,8 @@ export class WallFaceDialog {
       });
       g.appendChild(opening);
       // 门扇开启线：铰链侧门楣角 → 对侧地面
-      const hingeX = this.posX(v, clamp(door.pos - door.width / 2, a, b));
-      const farX = this.posX(v, clamp(door.pos + door.width / 2, a, b));
+      const hingeX = this.posX(v, clamp(door.pos - door.width / 2, a, b) - segA);
+      const farX = this.posX(v, clamp(door.pos + door.width / 2, a, b) - segA);
       const toward = (door.face || 0) === v.face;
       g.appendChild(el('line', {
         x1: hingeX, y1: top, x2: farX, y2: this.floorY,
