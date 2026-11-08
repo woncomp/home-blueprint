@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE } from './model.js';
+import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE, detectRooms, pointInRoom, resolveRoomNames } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -41,8 +41,8 @@ export class Plan2D {
     this.tool = 'select';
     this.view = { scale: 80, ox: 0, oy: 0 };
     this.selectedId = null;
-    this.selectedKind = null; // 'wall' | 'door' | 'node'（强电箱）
-    this.hover = null;        // { type: 'wall'|'handle'|'box'|'door', key|id }
+    this.selectedKind = null; // 'wall' | 'door' | 'node'（强电箱）| 'room'
+    this.hover = null;        // { type: 'wall'|'handle'|'box'|'door'|'room', key|id }
     this.drawP1 = null;       // 画墙起点
     this.previewP2 = null;    // 画墙预览终点
     this.drag = null;         // 进行中的拖动
@@ -163,6 +163,28 @@ export class Plan2D {
       const [, sy] = this.toScreen([0, z]);
       el('line', { x1: 0, y1: sy, x2: this.w, y2: sy, class: z % 5 === 0 ? 'grid-line-major' : 'grid-line' }, gGrid);
     }
+
+    // 房间：半透明填充 + 居中名称标签（拾取走几何判定，元素不参与交互）
+    const { rooms } = detectRooms(walls);
+    this.rooms = rooms;
+    const roomNames = resolveRoomNames(this.data(), rooms);
+    const gRooms = el('g', {}, svg);
+    rooms.forEach((room, i) => {
+      const isSel = this.selectedKind === 'room' && this.selectedId === room.key;
+      const isHov = !isSel && this.hover && this.hover.type === 'room' && this.hover.id === room.key;
+      el('polygon', {
+        points: room.points.map(p => this.toScreen(p).map(v => v.toFixed(1)).join(',')).join(' '),
+        class: 'plan-room-fill' + (isSel ? ' selected' : isHov ? ' hover' : ''),
+      }, gRooms);
+      let cx = 0, cy = 0;
+      for (const p of room.points) { const [sx, sy] = this.toScreen(p); cx += sx; cy += sy; }
+      cx /= room.points.length; cy /= room.points.length;
+      const t = el('text', {
+        x: cx, y: cy, dy: '0.35em', class: 'plan-room-label',
+        'data-room-index': i,
+      }, gRooms);
+      t.textContent = roomNames.get(room.key);
+    });
 
     // 节点与强电箱位置标记（仅作上下文，不参与交互）
     const byId = new Map(walls.map(w => [w.id, w]));
@@ -320,7 +342,7 @@ export class Plan2D {
 
   updateHint() {
     const hints = {
-      select: '单击墙、门或控制点选中；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
+      select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
       ortho: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '正交画墙：点击起点（自动锁定水平/竖直，Alt 关闭吸附）',
       free: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '任意画墙：点击起点（可任意角度，Alt 关闭吸附）',
       door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；可连续添加，Esc 退出',
@@ -334,7 +356,7 @@ export class Plan2D {
     if (this.tool === 'ortho' || this.tool === 'free' || this.tool === 'door') c = 'crosshair';
     else if (this.tool === 'delete') c = 'not-allowed';
     else if (this.drag && this.drag.type === 'pan') c = 'grabbing';
-    else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door') ? 'pointer' : 'move';
+    else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door' || this.hover.type === 'room') ? 'pointer' : 'move';
     this.svg.style.cursor = c;
   }
 
@@ -355,6 +377,13 @@ export class Plan2D {
     this.selectedKind = 'door';
     this.selectedId = id;
     this.onSelect({ kind: 'door', id });
+    this.render();
+  }
+
+  selectRoom(key) {
+    this.selectedKind = 'room';
+    this.selectedId = key;
+    this.onSelect({ kind: 'room', id: key });
     this.render();
   }
 
@@ -452,6 +481,15 @@ export class Plan2D {
       if (pr.d > tol) continue;
       const off = Math.abs(pr.dist - door.pos);
       if (off <= door.width / 2 + tol && off < bestOff) { bestOff = off; best = door; }
+    }
+    return best;
+  }
+
+  // 房间拾取：点在多边形内即可，多个命中取面积最小者
+  pickRoom(w) {
+    let best = null;
+    for (const room of (this.rooms || [])) {
+      if (pointInRoom(w[0], w[1], room) && (!best || room.area < best.area)) best = room;
     }
     return best;
   }
@@ -590,6 +628,11 @@ export class Plan2D {
         };
         return;
       }
+      const room = this.pickRoom(w);
+      if (room) {
+        this.selectRoom(room.key);
+        return;
+      }
       this.drag = { type: 'pan', lastSx: sx, lastSy: sy, moved: false };
       this.updateCursor();
       return;
@@ -654,6 +697,10 @@ export class Plan2D {
         else {
           const wall = this.pickWall(w);
           if (wall) hover = { type: 'wall', id: wall.id };
+          else {
+            const room = this.pickRoom(w);
+            if (room) hover = { type: 'room', id: room.key };
+          }
         }
       }
       const key = hover ? `${hover.type}:${hover.key || hover.id || ''}` : null;

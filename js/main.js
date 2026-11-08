@@ -61,7 +61,7 @@ function refresh() {
 }
 
 function refreshPanel() {
-  panel.update(app.data, scene3d.circuits, app.selection, app.mode);
+  panel.update(app.data, scene3d.circuits, app.selection, app.mode, scene3d.rooms);
 }
 
 function refreshToolbar() {

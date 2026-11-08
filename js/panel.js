@@ -15,8 +15,9 @@ export class Panel {
   on(event, cb) { this.cbs[event] = cb; }
   emit(event, arg) { if (this.cbs[event]) this.cbs[event](arg); }
 
-  update(data, circuits, selection, mode) {
+  update(data, circuits, selection, mode, rooms) {
     this.mode = mode || 'view';
+    this.rooms = rooms || [];
     this.renderBreakerBox(data, circuits);
     this.renderEntity(data, circuits, selection);
   }
@@ -94,7 +95,7 @@ export class Panel {
     this.entityInfoEl.innerHTML = '';
     if (!selection) {
       this.entityInfoEl.innerHTML = this.mode === 'plan'
-        ? '<p class="placeholder">在顶视图中点击墙或控制点查看详情</p>'
+        ? '<p class="placeholder">在顶视图中点击墙、门或房间地面查看详情</p>'
         : '<p class="placeholder">点击 3D 场景中的电线、设备或端点查看详情</p>';
       return;
     }
@@ -266,6 +267,8 @@ export class Panel {
       title.className = 'entity-title';
       title.textContent = '房间';
       wrap.appendChild(title);
+      const room = (this.rooms || []).find(r => r.key === selection.id);
+      if (room) addRow('面积', `${room.area.toFixed(2)} m²`);
       const name = (data.roomNames || {})[selection.id] || '';
       const input = document.createElement('input');
       input.type = 'text';
@@ -273,10 +276,16 @@ export class Panel {
       input.placeholder = '房间名称';
       input.addEventListener('change', () => {
         if (!data.roomNames) data.roomNames = {};
-        data.roomNames[selection.id] = input.value;
+        if (input.value) data.roomNames[selection.id] = input.value;
+        else delete data.roomNames[selection.id]; // 清空名称：回到提示名/默认名
         this.emit('edited');
       });
       addRow('名称', input);
+      const p = document.createElement('p');
+      p.className = 'placeholder';
+      p.style.marginTop = '6px';
+      p.textContent = '名称显示在 3D 场景与顶视图的房间中心；清空名称可恢复默认命名。';
+      wrap.appendChild(p);
     }
   }
 }

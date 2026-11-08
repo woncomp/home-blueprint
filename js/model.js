@@ -704,6 +704,23 @@ export function pointInRoom(x, z, room) {
   return inside;
 }
 
+// 房间显示名：显式命名 > 按面积降序分配 roomNameHints > 兜底“房间N”。
+// hint 分配会写入 data.roomNames（沿用 3D 标签的既有行为，导出 JSON 时成为显式命名）。
+// 返回 Map<room.key, 显示名>，名称与 rooms 数组顺序无关（兜底序号按传入数组下标）。
+export function resolveRoomNames(data, rooms) {
+  const names = data.roomNames || (data.roomNames = {});
+  const hints = [...(data.roomNameHints || [])];
+  const sorted = [...rooms].sort((a, b) => b.area - a.area);
+  for (const room of sorted) {
+    if (!names[room.key] && hints.length) names[room.key] = hints.shift();
+  }
+  const result = new Map();
+  rooms.forEach((room, i) => {
+    result.set(room.key, names[room.key] || `房间${i + 1}`);
+  });
+  return result;
+}
+
 // ---------- 线路计算 ----------
 
 // 返回 { circuits: [{ breakerId, label, color, wireIds:Set, nodeIds:Set, wallIds:Set }], wireCircuit: Map<wireId, idx>, nodeCircuit: Map<nodeId, idx>, wallsWithCircuit: Set<wallId> }

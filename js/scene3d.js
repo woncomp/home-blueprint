@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
-  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE,
+  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE, resolveRoomNames,
   buildWallSegments, segmentsForWall, faceSegOf, wirePathPoints,
 } from './model.js';
 import { buildWallShell, locateWall, exposedFaceSpans } from './wallgeometry.js';
@@ -148,13 +148,7 @@ export class Scene3D {
 
   // ---------- 房间 ----------
   buildRooms() {
-    const names = this.data.roomNames || {};
-    const hints = [...(this.data.roomNameHints || [])];
-    const sorted = [...this.rooms].sort((a, b) => b.area - a.area);
-    // 提示名按面积降序分配
-    for (const room of sorted) {
-      if (!names[room.key] && hints.length) names[room.key] = hints.shift();
-    }
+    const names = resolveRoomNames(this.data, this.rooms);
     this.rooms.forEach((room, i) => {
       const shape = new THREE.Shape();
       room.points.forEach(([x, z], j) => (j === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z)));
@@ -174,7 +168,7 @@ export class Scene3D {
       let cx = 0, cz = 0;
       for (const [x, z] of room.points) { cx += x; cz += z; }
       cx /= room.points.length; cz /= room.points.length;
-      const name = names[room.key] || `房间${i + 1}`;
+      const name = names.get(room.key);
       let label;
       if (this.roomLabelFloor) {
         label = makeFloorTextMesh(name, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
