@@ -4,7 +4,8 @@ import { Scene3D } from './scene3d.js';
 import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
-import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
+import { loadDefaultData, parseJsonText, exportJsonText } from './persistence.js';
+import { JsonDialog } from './json-dialog.js';
 import { DEVICE_TYPES, createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
@@ -133,33 +134,37 @@ document.getElementById('btn-delete-entity').addEventListener('click', deleteSel
 document.getElementById('chk-room-label-floor').addEventListener('change', e => {
   scene3d.setRoomLabelMode(e.target.checked);
 });
-document.getElementById('btn-export').addEventListener('click', () => {
+// ---------- 查看 JSON ----------
+// 唯一的数据提交点：整体替换布局并按原导入成功流程刷新。
+// 调用方必须先通过 parseJsonText 完成“解析 → 迁移 → 校验”，失败时不得进入本函数，
+// 因此不会出现先清空选择、部分刷新或替换一半数据的情况
+function applyData(data) {
+  app.data = data;
   syncTerminals();
-  exportJson(app.data);
-  toast('已导出 JSON 文件');
+  app.selection = null;
+  scene3d.setSelection(null);
+  plan2d.setSelection(null);
+  scene3d.setData(data);
+  if (app.mode === 'plan') plan2d.fitView(); // 换入新数据时自动适应一次
+  refreshPanel();
+  refreshToolbar();
+}
+
+const jsonDialog = new JsonDialog({
+  onApply: text => {
+    const data = parseJsonText(text); // 解析/校验失败抛错，不会走到 applyData
+    applyData(data);
+    toast('JSON 应用成功');
+  },
+  onSave: text => {
+    exportJsonText(text);
+    toast('已保存 JSON 文件');
+  },
 });
-document.getElementById('btn-import').addEventListener('click', () => {
-  document.getElementById('file-input').click();
-});
-document.getElementById('file-input').addEventListener('change', async e => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const data = await importJsonFile(file);
-    app.data = data;
-    syncTerminals();
-    app.selection = null;
-    scene3d.setSelection(null);
-    plan2d.setSelection(null);
-    scene3d.setData(data);
-    if (app.mode === 'plan') plan2d.fitView(); // 导入新数据时自动适应一次
-    refreshPanel();
-    refreshToolbar();
-    toast('导入成功');
-  } catch (err) {
-    toast('导入失败: ' + err.message, true);
-  }
+
+document.getElementById('btn-view-json').addEventListener('click', () => {
+  syncTerminals(); // 与原“导出 JSON”一致：先同步端子，保证展示内容与导出行为相同
+  jsonDialog.open(JSON.stringify(app.data, null, 2));
 });
 
 // ---------- 面板事件 ----------

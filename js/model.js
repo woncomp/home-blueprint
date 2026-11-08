@@ -826,28 +826,91 @@ export function wiresAt(data, nodeId) {
   return data.wires.filter(w => w.from === nodeId || w.to === nodeId);
 }
 
+const NODE_TYPES = ['turn', 'split', 'device', 'terminal'];
+
+function isPoint(p) {
+  return Array.isArray(p) && p.length === 2
+    && typeof p[0] === 'number' && Number.isFinite(p[0])
+    && typeof p[1] === 'number' && Number.isFinite(p[1]);
+}
+
+// 校验只读取传入对象，不做任何修改；供默认数据加载与 JSON 应用共用。
+// 除原有规则外，还覆盖应用所必需的引用完整性：核心字段类型、节点/门对墙的引用、
+// 电线与 links 对节点的引用、断路器端子引用，以及跨集合的核心实体 ID 唯一性
 export function validateData(data) {
-  if (!data || typeof data !== 'object') return '数据不是对象';
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return '数据不是对象';
   if (data.version !== 2) return `不支持的版本: ${data.version}`;
   if (!Array.isArray(data.walls) || !Array.isArray(data.nodes) || !Array.isArray(data.wires)) {
     return 'walls/nodes/wires 必须是数组';
   }
+  if (data.links != null && !Array.isArray(data.links)) return 'links 必须是数组';
+
+  // 核心实体 ID 全局唯一（墙/节点/电线/门/连通共用一个命名空间）
+  const seenIds = new Set();
+  const checkId = (id, what) => {
+    if (typeof id !== 'string' || !id) return `${what}缺少有效 id`;
+    if (seenIds.has(id)) return `重复的 id: ${id}`;
+    seenIds.add(id);
+    return null;
+  };
+
+  for (const w of data.walls) {
+    const idErr = checkId(w && w.id, '墙');
+    if (idErr) return idErr;
+    if (!isPoint(w.start) || !isPoint(w.end)) return `墙 ${w.id} 的 start/end 必须是 [x, z] 坐标`;
+  }
+
   // 强电箱是特殊设备节点，最多一个；尚未放置（空户型）是允许的
-  const boxes = data.nodes.filter(n => n.deviceType === 'breakerBox');
+  const boxes = data.nodes.filter(n => n && n.deviceType === 'breakerBox');
   if (boxes.length > 1) return '强电箱最多一个';
-  // 节点 pos 为沿原始墙的 0~1 归一化坐标
+
   const wallIds = new Set(data.walls.map(w => w.id));
+  const nodeIds = new Set();
+  // 节点 pos 为沿原始墙的 0~1 归一化坐标
   for (const n of data.nodes) {
-    if (!wallIds.has(n.wall)) return `节点 ${n.id} 引用了不存在的墙`;
-    if (!(n.pos >= 0) || !(n.pos <= 1)) return `节点 ${n.id} 的 pos 必须是 0~1 归一化坐标`;
+    const idErr = checkId(n && n.id, '节点');
+    if (idErr) return idErr;
+    if (!NODE_TYPES.includes(n.type)) return `节点 ${n.id} 的 type 无效: ${n.type}`;
+    if (typeof n.wall !== 'string' || !wallIds.has(n.wall)) return `节点 ${n.id} 引用了不存在的墙`;
+    if (typeof n.pos !== 'number' || !(n.pos >= 0) || !(n.pos <= 1)) {
+      return `节点 ${n.id} 的 pos 必须是 0~1 归一化坐标`;
+    }
+    if (typeof n.height !== 'number' || !Number.isFinite(n.height)) return `节点 ${n.id} 的 height 必须是数字`;
+    if (n.type === 'device' && !DEVICE_TYPES[n.deviceType]) return `节点 ${n.id} 的设备类型无效: ${n.deviceType}`;
+    nodeIds.add(n.id);
+  }
+  for (const w of data.wires) {
+    const idErr = checkId(w && w.id, '电线');
+    if (idErr) return idErr;
+    if (!nodeIds.has(w.from) || !nodeIds.has(w.to)) return `电线 ${w.id} 引用了不存在的节点`;
+  }
+  if (data.links != null) {
+    for (const l of data.links) {
+      const idErr = checkId(l && l.id, '连通');
+      if (idErr) return idErr;
+      if (!nodeIds.has(l.a) || !nodeIds.has(l.b)) return `连通 ${l.id} 引用了不存在的节点`;
+    }
   }
   // doors 为可选字段（旧数据没有）：存在时须为数组且 wall 引用有效
   if (data.doors != null) {
     if (!Array.isArray(data.doors)) return 'doors 必须是数组';
-    const wallIds = new Set(data.walls.map(w => w.id));
     for (const d of data.doors) {
-      if (!d || typeof d !== 'object' || !wallIds.has(d.wall)) return '门引用了不存在的墙';
-      if (!(d.width > 0) || !(d.pos >= 0)) return '门的宽度/位置无效';
+      const idErr = checkId(d && d.id, '门');
+      if (idErr) return idErr;
+      if (typeof d.wall !== 'string' || !wallIds.has(d.wall)) return `门 ${d.id} 引用了不存在的墙`;
+      if (!(typeof d.pos === 'number' && d.pos >= 0) || !(typeof d.width === 'number' && d.width > 0)) {
+        return `门 ${d.id} 的宽度/位置无效`;
+      }
+    }
+  }
+  // 断路器端子须指向真实节点；terminal 缺失视为未接线，允许通过
+  for (const box of boxes) {
+    if (!Array.isArray(box.breakers)) return `强电箱 ${box.id} 的 breakers 必须是数组`;
+    for (const br of box.breakers) {
+      if (!br || typeof br !== 'object') return `强电箱 ${box.id} 的断路器条目无效`;
+      if (br.terminal != null && (typeof br.terminal !== 'string' || !nodeIds.has(br.terminal))) {
+        return `断路器 ${br.id || ''} 引用了不存在的端子`;
+      }
     }
   }
   return null;

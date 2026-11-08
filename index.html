@@ -42,9 +42,7 @@
         <input type="checkbox" id="chk-room-label-floor" checked>
         房间文字贴地
       </label>
-      <button id="btn-export" class="tool-btn">导出 JSON</button>
-      <button id="btn-import" class="tool-btn">导入 JSON</button>
-      <input type="file" id="file-input" accept=".json" class="hidden">
+      <button id="btn-view-json" class="tool-btn">查看 JSON</button>
     </div>
     <div id="canvas-container">
       <canvas id="scene-canvas"></canvas>
@@ -93,6 +91,22 @@
       <div id="wallface-side">
         <div id="wallface-info"></div>
       </div>
+    </div>
+  </div>
+</div>
+<div id="json-dialog" class="hidden" role="dialog" aria-modal="true" aria-labelledby="json-dialog-title">
+  <div id="json-dialog-backdrop"></div>
+  <div id="json-dialog-window">
+    <div id="json-dialog-header">
+      <span id="json-dialog-title">查看 JSON</span>
+      <span id="json-dialog-error" role="alert" class="hidden"></span>
+      <div class="spacer"></div>
+      <button id="btn-json-apply" class="json-btn primary" title="校验通过后整体替换当前布局">应用</button>
+      <button id="btn-json-save" class="json-btn" title="把文本框当前内容下载为 .json 文件，不影响当前布局">保存文件</button>
+      <button id="btn-json-close" class="json-btn" title="放弃未应用的编辑（Esc 同）">关闭 ✕</button>
+    </div>
+    <div id="json-dialog-body">
+      <textarea id="json-editor" spellcheck="false" wrap="off" aria-label="布局 JSON 内容（可编辑）"></textarea>
     </div>
   </div>
 </div>

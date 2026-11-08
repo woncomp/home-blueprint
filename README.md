@@ -57,14 +57,16 @@ python -m http.server 8000
 ### 数据保存
 
 - 打开时自动加载 `data/default.json` 作为默认户型。
-- "导出 JSON"下载当前数据；用导出文件替换源码中的 `data/default.json` 即可更新默认布局。
-- "导入 JSON"从本地文件加载数据。
+- 工具栏"查看 JSON"打开接近全屏的弹窗，以缩进格式展示当前布局 JSON，可直接编辑：
+  - **应用**：先解析、迁移并校验文本，全部通过后才整体替换当前布局并刷新 3D / 2D / 面板；失败时只在弹窗标题栏显示错误原因，实际布局不变，文本也保留。
+  - **保存文件**：把文本框当前内容下载为 `electrical-design.json`，不校验也不影响当前布局（未编辑时等同导出当前数据）。用下载文件替换源码中的 `data/default.json` 即可更新默认布局。
+  - **关闭**：点击关闭按钮、遮罩或按 `Esc` 只关闭弹窗，不自动应用未应用的编辑。
 
 ## 数据格式
 
 见 `data/default.json`。核心结构：
 
-- `version`：数据版本，当前为 2。版本 1 的节点 `pos` 为沿墙米数，导入时自动迁移为 0~1 归一化坐标。
+- `version`：数据版本，当前为 2。版本 1 的节点 `pos` 为沿墙米数，加载/应用 JSON 时自动迁移为 0~1 归一化坐标。
 - `walls`：线段墙（起点/终点/高度/厚度），围出封闭环即房间；持久化层始终保存原始整墙，不因房间归属而拆分。
 - `nodes`：墙面上的点，`type` 为 `turn`（转弯）/ `split`（分线）/ `device`（设备）/ `terminal`（强电箱端子），含 `wall`、`face`（0=A 面，1=B 面）、`pos`（**沿原始墙的 0~1 归一化坐标**，0=起点端、1=终点端）、`height`（离地高度，米）。
 - `wires`：连接两个节点的电线；可以是当前墙同面两点，也可以是相邻两面墙上的点（跨墙电线，3D 沿公共拐角走线）。
@@ -79,11 +81,12 @@ index.html          入口页面
 css/style.css       样式
 js/main.js          启动与各模块装配、三模式切换
 js/model.js         数据模型、房间环检测、线路计算
+js/json-dialog.js   “查看 JSON”弹窗（编辑 / 应用 / 保存文件）
 js/scene3d.js       3D 场景渲染与拾取
 js/plan2d.js        户型编辑 2D 顶视图（画墙、拖动、吸附与连接联动）
 js/controls.js      聚焦视点摄像机
 js/wallface.js      墙面 2D 展开对话框
 js/panel.js         右侧信息栏
-js/persistence.js   JSON 导入导出
+js/persistence.js   JSON 解析、校验与下载
 data/default.json   默认户型数据
 ```

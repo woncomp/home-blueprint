@@ -171,6 +171,45 @@ svg .node:hover { stroke: #4a90d9; stroke-width: 2; }
 svg .wire-hit { stroke: transparent; stroke-width: 12; cursor: pointer; fill: none; }
 svg .wire-hit:hover + .wire-line { stroke-width: 4; }
 
+/* ---------- 查看 JSON 弹窗（层级：墙面展开 100 < 本弹窗 150 < Toast 200） ---------- */
+#json-dialog { position: fixed; inset: 0; z-index: 150; }
+#json-dialog-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#json-dialog-window {
+  position: absolute; left: 2vw; top: 4vh; right: 2vw; bottom: 4vh;
+  display: flex; flex-direction: column;
+  background: #fff; border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5); overflow: hidden;
+}
+#json-dialog-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; background: #2b2d33; color: #fff;
+  border-bottom: 1px solid #1a1b1e;
+}
+#json-dialog-title { font-weight: bold; font-size: 14px; flex-shrink: 0; }
+#json-dialog-error {
+  color: #ffb0b0; font-size: 12px; min-width: 0;
+  max-width: 100%; flex: 1 1 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.json-btn {
+  padding: 4px 12px; border: 1px solid #555; border-radius: 4px;
+  background: #3a3d44; color: #ddd; cursor: pointer; font-size: 12px;
+  flex-shrink: 0;
+}
+.json-btn:hover { background: #4a4d55; }
+.json-btn:focus-visible { outline: 2px solid #4a90d9; outline-offset: 1px; }
+.json-btn.primary { background: #4a90d9; border-color: #4a90d9; color: #fff; }
+.json-btn.primary:hover { background: #357ac2; }
+#json-dialog-body { flex: 1; min-height: 0; }
+#json-editor {
+  width: 100%; height: 100%; display: block;
+  resize: none; border: none; outline: none;
+  padding: 10px 12px; background: #fafafa; color: #222;
+  font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.5;
+  white-space: pre; overflow: auto;
+}
+#json-editor:focus { background: #fff; }
+
 .toast {
   position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
   background: rgba(40,40,45,0.92); color: #fff; padding: 8px 18px;
