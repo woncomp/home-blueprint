@@ -199,11 +199,11 @@ test('3D 路径：两端同点等退化情况不报错', () => {
 // ---------- 三墙展开对话框 ----------
 
 // 无 DOM 环境：只 stub open/computeViews 依赖的最小属性
-function makeDialog(data, wallId, face, seg) {
+function makeDialog(data, wallId, face, seg, scrollSize = { clientHeight: 500, clientWidth: 900 }) {
   const notifications = [];
   const dialog = Object.assign(Object.create(WallFaceDialog.prototype), {
     dialog: { classList: { remove() {}, add() {}, contains() { return false; } } },
-    scroll: { clientHeight: 500, clientWidth: 900, scrollLeft: 0 },
+    scroll: { ...scrollSize, scrollLeft: 0 },
     svg: {},
     titleEl: { textContent: '' },
     infoEl: { innerHTML: '' },
@@ -236,7 +236,7 @@ function floorData() {
   };
 }
 
-test('三墙视图：w3 B 面打开为 左=w2 / 当前=w3 / 右=w4，统一比例、底边对齐', () => {
+test('三墙视图：w3 B 面打开为 左=w2 / 当前=w3 / 右=w4，三槽保底且侧墙贴边', () => {
   const dlg = makeDialog(floorData(), 'w3', 1, null);
   assert.deepEqual(dlg.views.map(v => [v.role, v.wallId, v.face]), [
     ['left', 'w2', 1], ['active', 'w3', 1], ['right', 'w4', 1],
@@ -245,11 +245,118 @@ test('三墙视图：w3 B 面打开为 左=w2 / 当前=w3 / 右=w4，统一比�
   // 底边对齐：所有面板 bandTop = heightY(h)
   const tops = dlg.views.map(v => dlg.heightY(v.h));
   assert.ok(tops.every(t => Math.abs(t - tops[0]) < 1e-9));
-  // 面板依次排布，间距 PANEL_GAP
-  for (let i = 1; i < dlg.views.length; i++) {
-    const gap = dlg.views[i].baseX - (dlg.views[i - 1].baseX + dlg.views[i - 1].w);
-    assert.ok(Math.abs(gap - 40) < 1e-9, `gap ${gap}`);
+  // 左/中/右独立槽位：各自至少可视宽度的 1/3，只按本槽墙宽扩展
+  const slotWOf = role => {
+    const v = dlg.views.find(x => x.role === role);
+    return role === 'active'
+      ? Math.max(900 / 3, v.len * dlg.scale + 2 * 40)
+      : Math.max(900 / 3, v.len * dlg.scale + 16);
+  };
+  assert.equal(dlg.svgW, ['left', 'active', 'right'].reduce((sum, role) => sum + slotWOf(role), 0));
+  for (const v of dlg.views) {
+    assert.equal(v.slotW, slotWOf(v.role));
+    assert.ok(v.slotW >= 900 / 3 - 1e-9);
   }
+  // 左墙贴本槽右缘，右墙贴本槽左缘，当前墙在本槽居中
+  const [left, active, right] = dlg.views;
+  assert.ok(Math.abs(left.baseX + left.w - (left.slotX + left.slotW)) < 1e-9);
+  assert.ok(Math.abs(right.baseX - right.slotX) < 1e-9);
+  assert.ok(Math.abs(active.baseX + active.w / 2 - (active.slotX + active.slotW / 2)) < 1e-9);
+  // 当前墙槽位两侧最小 PANEL_GAP；分界线在实际间隙中点
+  assert.ok(active.baseX - (left.baseX + left.w) >= 40 - 1e-9);
+  assert.ok(right.baseX - (active.baseX + active.w) >= 40 - 1e-9);
+  assert.ok(Math.abs(dlg.seamXBetween(left, active) - (left.baseX + left.w + active.baseX) / 2) < 1e-9);
+  assert.ok(Math.abs(dlg.seamXBetween(active, right) - (active.baseX + active.w + right.baseX) / 2) < 1e-9);
+  // 打开/切换时按当前墙中心设置 scrollLeft 后，当前墙可居中且不越界
+  const target = active.baseX + active.w / 2 - 900 / 2;
+  assert.ok(target >= -1e-9 && target <= dlg.svgW - 900 + 1e-9);
+});
+
+test('三墙视图：孤立墙保留左右空槽，当前墙仍在中间槽位居中', () => {
+  const data = {
+    walls: [{ id: 'lonely', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.2 }],
+    nodes: [],
+    wires: [],
+    links: [],
+  };
+  const dlg = makeDialog(data, 'lonely', 1, null);
+  assert.deepEqual(dlg.views.map(v => v.role), ['active']);
+  assert.equal(dlg.slotWs.left, 900 / 3); // 空槽仍按 1/3 预留
+  assert.equal(dlg.slotWs.right, 900 / 3);
+  assert.equal(dlg.slotWs.active, Math.max(900 / 3, 4 * dlg.scale + 2 * 40));
+  assert.equal(dlg.svgW, dlg.slotWs.left + dlg.slotWs.active + dlg.slotWs.right);
+  const av = dlg.activeView();
+  assert.equal(av.slotX, dlg.slotWs.left);
+  assert.ok(Math.abs(av.baseX + av.w / 2 - (av.slotX + av.slotW / 2)) < 1e-9);
+  const target = av.baseX + av.w / 2 - 900 / 2;
+  assert.ok(target >= -1e-9 && target <= dlg.svgW - 900 + 1e-9);
+});
+
+test('三墙视图：长墙只扩展自身槽位，短墙贴边且不产生额外大间隔', () => {
+  // 长短差异明显的 L 形链：0.5m / 1m / 8m，中墙作为当前墙
+  const walls = [
+    { id: 'short', start: [0, 0], end: [0.5, 0], height: 2.8, thickness: 0.2 },
+    { id: 'mid', start: [0.5, 0], end: [0.5, 1], height: 2.8, thickness: 0.2 },
+    { id: 'long', start: [0.5, 1], end: [8.5, 1], height: 2.8, thickness: 0.2 },
+  ];
+  const data = { walls, nodes: [], wires: [], links: [] };
+  // 任一面总有一侧邻墙；选两面都有邻墙的一侧
+  let dlg = null;
+  for (const face of [0, 1]) {
+    const d = makeDialog({ ...data }, 'mid', face, null);
+    if (d.views.length === 3) { dlg = d; break; }
+  }
+  assert.ok(dlg, 'mid 墙应能同时找到左右邻墙');
+  const short = dlg.views.find(v => v.wallId === 'short');
+  const long = dlg.views.find(v => v.wallId === 'long');
+  const active = dlg.activeView();
+  // 8m 长墙只扩展自己的槽位；短墙与当前墙槽位仍保底 1/3
+  assert.equal(dlg.slotWs[long.role], Math.max(900 / 3, long.w + 16));
+  assert.equal(dlg.slotWs[short.role], 900 / 3);
+  assert.equal(dlg.slotWs.active, 900 / 3);
+  assert.ok(dlg.slotWs[long.role] > 900 / 3);
+  // 侧墙贴向当前墙一侧；实际间隔只来自当前墙槽位的保底留白
+  if (short.role === 'left') {
+    assert.ok(Math.abs(short.baseX + short.w - (short.slotX + short.slotW)) < 1e-9);
+  } else {
+    assert.ok(Math.abs(short.baseX - short.slotX) < 1e-9);
+  }
+  if (long.role === 'left') {
+    assert.ok(Math.abs(long.baseX + long.w - (long.slotX + long.slotW)) < 1e-9);
+  } else {
+    assert.ok(Math.abs(long.baseX - long.slotX) < 1e-9);
+  }
+  const activeInset = (active.slotW - active.w) / 2;
+  assert.ok(active.baseX - (dlg.views[0].baseX + dlg.views[0].w) >= 40 - 1e-9);
+  assert.ok(dlg.views[2].baseX - (active.baseX + active.w) >= 40 - 1e-9);
+  assert.ok(Math.abs(dlg.views[0].role === 'left'
+    ? active.baseX - (dlg.views[0].baseX + dlg.views[0].w) - activeInset
+    : dlg.views[0].baseX - (active.baseX + active.w) - activeInset) < 1e-9);
+  const target = active.baseX + active.w / 2 - 900 / 2;
+  assert.ok(target >= -1e-9 && target <= dlg.svgW - 900 + 1e-9);
+});
+
+test('三墙视图：取消缩放上限，最高墙垂直填满可用高度并底边对齐', () => {
+  const walls = [
+    { id: 'short', start: [0, 0], end: [0.5, 0], height: 1.4, thickness: 0.2 },
+    { id: 'mid', start: [0.5, 0], end: [0.5, 1], height: 2.8, thickness: 0.2 },
+    { id: 'long', start: [0.5, 1], end: [8.5, 1], height: 2.8, thickness: 0.2 },
+  ];
+  const data = { walls, nodes: [], wires: [], links: [] };
+  let dlg = null;
+  for (const face of [0, 1]) {
+    const d = makeDialog({ ...data }, 'mid', face, null, { clientHeight: 700, clientWidth: 900 });
+    if (d.views.length === 3) { dlg = d; break; }
+  }
+  assert.ok(dlg, 'mid 墙应能同时找到左右邻墙');
+  assert.ok(Math.abs(dlg.scale - (700 - 44 - 40) / 2.8) < 1e-9);
+  assert.ok(dlg.scale > 120); // 旧实现会被钳制到 120
+  const tallest = dlg.views.filter(v => v.h === 2.8);
+  for (const v of tallest) assert.ok(Math.abs(dlg.heightY(v.h) - 44) < 1e-9);
+  const shortV = dlg.views.find(v => v.h === 1.4);
+  assert.ok(Math.abs(dlg.heightY(shortV.h) - (dlg.floorY - 1.4 * dlg.scale)) < 1e-9);
+  for (const v of dlg.views) assert.ok(Math.abs(dlg.heightY(v.h) + v.h * dlg.scale - dlg.floorY) < 1e-9);
+  assert.ok(Math.abs(dlg.floorY - (700 - 40)) < 1e-9);
 });
 
 test('三墙视图：A 面（外侧面）水平反向，但持久化 pos 不变', () => {

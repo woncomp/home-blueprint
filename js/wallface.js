@@ -13,8 +13,8 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const HEIGHT_SEGMENTS = 6;
 const Y_SNAP_PX = 8; // 吸附半径（屏幕像素，随缩放换算成米）
 // 三墙展开布局（像素）
-const PAD_X = 16;        // SVG 左右留白
-const PANEL_GAP = 40;    // 相邻墙面板间距（跨墙电线在此竖直转折）
+const PAD_X = 16;        // 槽位内墙面两侧最小留白（容纳高度刻度等）
+const PANEL_GAP = 40;    // 相邻墙面实际边缘的最小间距（跨墙电线在此竖直转折）
 const TOP_PAD = 44;      // 标题栏高度
 const BOTTOM_PAD = 40;   // 底部刻度留白
 
@@ -49,7 +49,12 @@ export class WallFaceDialog {
     window.addEventListener('mousemove', e => this.onSvgMouseMove(e));
     window.addEventListener('mouseup', e => this.onSvgMouseUp(e));
     this.svg.addEventListener('mousemove', e => this.onSvgHover(e));
-    window.addEventListener('resize', () => { if (this.isOpen()) this.render(); });
+    window.addEventListener('resize', () => {
+      if (this.isOpen()) {
+        this._centerPending = true; // 视口变化后槽位重排，重新把当前墙居中
+        this.render();
+      }
+    });
   }
 
   // seg：逻辑墙段快照 {id, wallId, index, t0, t1}（派生拆分），null 视为整墙
@@ -95,7 +100,7 @@ export class WallFaceDialog {
   wall() { return (this.data.walls || []).find(w => w.id === this.wallId); }
 
   // ---------- 三墙视图 ----------
-  // 每个视图：{ role, wallId, face, seg, wall, len, h, reversed, baseX, w }
+  // 每个视图：{ role, wallId, face, seg, wall, len, h, reversed, slotX, baseX, w }
   // 坐标映射（显示像素）：posX(v, local)、heightY(height)；local 为段内米制
   computeViews() {
     const walls = this.data.walls || [];
@@ -124,17 +129,38 @@ export class WallFaceDialog {
 
     const svgH = this.scroll.clientHeight || 500;
     const svgW = this.scroll.clientWidth || 800;
+    // 统一比例：最高墙恰好占满标题栏与底部刻度之间的可用高度
     const maxH = Math.max(...this.views.map(v => v.h), 0.5);
-    const scale = Math.min(120, (svgH - TOP_PAD - BOTTOM_PAD) / maxH);
+    const scale = Math.max(svgH - TOP_PAD - BOTTOM_PAD, 1) / maxH;
     this.scale = scale;
-    this.floorY = TOP_PAD + maxH * scale;
-    let x = PAD_X;
-    for (const v of this.views) {
-      v.baseX = x;
-      v.w = v.len * scale;
-      x += v.w + PANEL_GAP;
+    this.floorY = svgH - BOTTOM_PAD;
+    // 三个独立槽位：各自保底可视宽度的 1/3，且只因本槽墙面过宽而扩展。
+    // 当前墙槽位两侧各留 PANEL_GAP；左右墙分别贴向本槽靠当前墙的一侧。
+    const minSlotW = svgW / 3;
+    const viewByRole = Object.fromEntries(this.views.map(v => [v.role, v]));
+    const slotWs = {};
+    for (const role of ['left', 'active', 'right']) {
+      const v = viewByRole[role];
+      slotWs[role] = !v ? minSlotW : role === 'active'
+        ? Math.max(minSlotW, v.len * scale + 2 * PANEL_GAP)
+        : Math.max(minSlotW, v.len * scale + PAD_X);
     }
-    this.svgW = Math.max(x - PANEL_GAP + PAD_X, svgW);
+    this.slotWs = slotWs;
+    let slotX = 0;
+    for (const role of ['left', 'active', 'right']) {
+      const v = viewByRole[role];
+      if (!v) { slotX += slotWs[role]; continue; }
+      v.slotX = slotX;
+      v.slotW = slotWs[role];
+      v.w = v.len * scale;
+      v.baseX = role === 'left'
+        ? v.slotX + v.slotW - v.w          // 左墙贴右缘
+        : role === 'right'
+          ? v.slotX                        // 右墙贴左缘
+          : v.slotX + (v.slotW - v.w) / 2; // 当前墙居中
+      slotX += v.slotW;
+    }
+    this.svgW = slotX;
     this.svgH = svgH;
   }
 
@@ -248,20 +274,21 @@ export class WallFaceDialog {
   renderPanel(v) {
     const isActive = v.role === 'active';
     const x0 = v.baseX, x1 = v.baseX + v.w;
+    const sx0 = v.slotX, sx1 = v.slotX + v.slotW;
     const bandTop = this.heightY(v.h);
-    // 面板标题
+    // 面板标题（按槽位左缘布置，短墙时不与相邻槽位挤在一起）
     const segTxt = v.seg && (v.seg.t0 > 1e-9 || v.seg.t1 < 1 - 1e-9) ? ` · 段 ${v.seg.index + 1}` : '';
-    const title = el('text', { x: x0, y: 18, class: 'wf-panel-title' });
+    const title = el('text', { x: sx0 + PAD_X, y: 18, class: 'wf-panel-title' });
     title.textContent = `墙 ${v.wallId} · ${v.face === 0 ? 'A 面' : 'B 面'}${segTxt}　长 ${v.len.toFixed(2)}m`;
     this.svg.appendChild(title);
     if (isActive) {
-      const badge = el('text', { x: x0, y: 34, class: 'wf-panel-badge' });
+      const badge = el('text', { x: sx0 + PAD_X, y: 34, class: 'wf-panel-badge' });
       badge.textContent = '▶ 当前编辑';
       this.svg.appendChild(badge);
     }
     // 相邻墙：标题右侧提供"设为当前墙"
     if (!isActive) {
-      const btnW = 96, btnH = 20, bx = x1 - btnW, by = 6;
+      const btnW = 96, btnH = 20, bx = sx1 - PAD_X - btnW, by = 6;
       const g = el('g', { class: 'wf-activate' });
       g.appendChild(el('rect', { x: bx, y: by, width: btnW, height: btnH, rx: 4 }));
       const t = el('text', { x: bx + btnW / 2, y: by + 14, 'text-anchor': 'middle', 'pointer-events': 'none' });
@@ -327,13 +354,15 @@ export class WallFaceDialog {
         this.svg.appendChild(gt);
       }
     }
-    // 面板之间的公共边界提示（竖直虚线）
+    // 面板之间的公共边界提示（实际墙面间隙的中点竖直虚线）
     if (!isActive) {
-      const seamX = v.role === 'left' ? x1 + PANEL_GAP / 2 : x0 - PANEL_GAP / 2;
-      this.svg.appendChild(el('line', {
-        x1: seamX, y1: this.heightY(v.h), x2: seamX, y2: this.floorY,
-        class: 'wf-seam', 'pointer-events': 'none',
-      }));
+      const seamX = this.seamXBetween(v, this.activeView());
+      if (seamX != null) {
+        this.svg.appendChild(el('line', {
+          x1: seamX, y1: this.heightY(v.h), x2: seamX, y2: this.floorY,
+          class: 'wf-seam', 'pointer-events': 'none',
+        }));
+      }
     }
   }
 
@@ -404,10 +433,12 @@ export class WallFaceDialog {
     let seam = null;
     if (roles.includes('left') && roles.includes('active')) {
       const left = va.role === 'left' ? va : vb;
-      seam = left.baseX + left.w + PANEL_GAP / 2;
+      const active = va.role === 'active' ? va : vb;
+      seam = (left.baseX + left.w + active.baseX) / 2;
     } else if (roles.includes('right') && roles.includes('active')) {
       const right = va.role === 'right' ? va : vb;
-      seam = right.baseX - PANEL_GAP / 2;
+      const active = va.role === 'active' ? va : vb;
+      seam = (active.baseX + active.w + right.baseX) / 2;
     }
     return seam;
   }
