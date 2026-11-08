@@ -99,7 +99,12 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 .breaker-item.highlighted { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.35); }
 .circuit-color { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.2); }
 .breaker-label { flex: 1; }
-.breaker-count { color: #999; font-size: 11px; }
+.breaker-label-input {
+  flex: 1; min-width: 0; padding: 2px 4px;
+  border: 1px solid #4a90d9; border-radius: 3px;
+  font-size: 13px; outline: none;
+}
+.breaker-count { color: #999; font-size: 11px; flex-shrink: 0; }
 .add-breaker-btn {
   width: 100%; padding: 6px; border: 1px dashed #aaa; border-radius: 5px;
   background: #fff; color: #666; cursor: pointer; font-size: 13px;

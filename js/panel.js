@@ -63,6 +63,36 @@ export class Panel {
       const labelEl = document.createElement('span');
       labelEl.className = 'breaker-label';
       labelEl.textContent = br.label || `断路器 ${i + 1}`;
+      labelEl.title = '双击修改线路名称';
+      labelEl.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'breaker-label-input';
+        input.value = br.label || '';
+        input.placeholder = `断路器 ${i + 1}`;
+        labelEl.replaceWith(input);
+        input.focus();
+        input.select();
+        let finished = false;
+        const finish = (save) => {
+          if (finished) return;
+          finished = true;
+          if (save) {
+            const v = input.value.trim();
+            if (v) br.label = v;
+            else delete br.label; // 清空名称：回到“断路器 N”默认名
+            this.emit('edited');
+          } else {
+            input.replaceWith(labelEl); // Escape 取消：还原为文字标签
+          }
+        };
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') finish(true);
+          else if (ev.key === 'Escape') finish(false);
+        });
+        input.addEventListener('blur', () => finish(true));
+      });
       item.appendChild(labelEl);
 
       const countEl = document.createElement('span');
@@ -238,7 +268,7 @@ export class Panel {
           const p = document.createElement('p');
           p.className = 'placeholder';
           p.style.marginTop = '6px';
-          p.textContent = '在上方强电箱面板中管理断路器；编辑模式下可沿墙水平拖动箱体。';
+          p.textContent = '在上方强电箱面板中管理断路器，双击线路名称可改名；编辑模式下可沿墙水平拖动箱体。';
           wrap.appendChild(p);
         } else {
           const sel = document.createElement('select');
