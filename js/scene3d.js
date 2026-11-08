@@ -228,14 +228,14 @@ export class Scene3D {
       head.userData.noPick = true;
       this.staticGroup.add(head);
 
-      // 门扇：铰链在门洞起始侧，朝 face 侧开约 75°
+      // 门扇：铰链在门洞起始侧，朝 face 侧微开约 30°，避免遮挡室内视线
       const [hx, hz] = at(door.pos - w / 2);
       const lw = Math.max(w - 0.06, 0.05), lh = Math.max(dh - 0.06, 0.1);
       const geo = new THREE.BoxGeometry(lw, lh, 0.035);
       geo.translate(lw / 2, 0, 0); // 铰链边移到原点
       const leaf = new THREE.Mesh(geo, leafMat);
       const nrm = wallNormal(wall, door.face || 0);
-      const ang = 1.3; // 75°
+      const ang = 0.52; // 30°
       const tx = dx * Math.cos(ang) + nrm[0] * Math.sin(ang);
       const tz = dz * Math.cos(ang) + nrm[1] * Math.sin(ang);
       leaf.rotation.y = -Math.atan2(tz, tx);
