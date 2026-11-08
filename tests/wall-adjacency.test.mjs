@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   detectRooms, buildWallSegments, segmentsForWall,
-  adjacentWallViews, wallFaceCorner, wirePathPoints,
+  adjacentWallViews, buildFaceRanges, wallFaceCorner, wirePathPoints,
 } from '../js/model.js';
 import { WallFaceDialog } from '../js/wallface.js';
 
@@ -50,7 +51,7 @@ test('相邻墙面：w1 B 面（卧室侧）左邻 w4、右邻 w2（w2 需 B 面
   assert.equal(adj.right.face, 1); // w2 的 B 面 (-x) 朝室内
 });
 
-test('相邻墙面：外侧面（A 面）回退到几何规则，选择外表面', () => {
+test('相邻墙面：外侧面（A 面）沿外平面边界环导航，选择外表面', () => {
   const walls = floorplan();
   const adj = adjacentWallViews(walls, segsMap(walls), 'w3', 0, null);
   assert.equal(adj.left.wallId, 'w4');
@@ -59,15 +60,19 @@ test('相邻墙面：外侧面（A 面）回退到几何规则，选择外表面
   assert.equal(adj.right.face, 0); // w2 A 面 (+x) 朝外
 });
 
-test('相邻墙面：T 型端点（w6 底端接 w1）能找到宿主墙', () => {
+test('相邻墙面：T 型端点（w6 底端接 w1）能找到宿主墙，且不串到切点另一侧房间', () => {
   const walls = floorplan();
   const adj = adjacentWallViews(walls, segsMap(walls), 'w6', 1, null);
-  // w6 (4,0)-(4,3.5) B 面 (+x) 朝卧室B；底端 (4,0) 在 w1 墙身上
+  // w6 (4,0)-(4,3.5) B 面 (−x) 朝卧室A；底端 (4,0) 在 w1 墙身上
   assert.equal(adj.left.wallId, 'w1');
-  // w1 在 x=4 处被 w6 拆段，应取包含 t=0.5 的段（半开区间归右侧）
-  assert.equal(adj.left.seg.index, 1);
-  // 顶端 (4,3.5) 接 w5 墙身
+  // 邻墙须与当前视图同一房间（卧室A）：取 w1 的卧室A侧连续面范围（t∈[0,0.5]），
+  // 不得按切点归属取到 t=0.5 右侧的卧室B段
+  assert.equal(adj.left.face, 1);
+  assert.equal(adj.left.seg.index, 0);
+  assert.ok(Math.abs(adj.left.seg.t1 - 0.5) < 1e-9);
+  // 顶端 (4,3.5) 接 w5 墙身（w5 A 面朝卧室A）
   assert.equal(adj.right.wallId, 'w5');
+  assert.equal(adj.right.face, 0);
 });
 
 test('相邻墙面：带逻辑段参数时按段边界找邻墙', () => {
@@ -87,6 +92,195 @@ test('相邻墙面：孤立墙没有邻居', () => {
   const adj = adjacentWallViews(walls, segsMap(walls), 'lonely', 1, null);
   assert.equal(adj.left, null);
   assert.equal(adj.right, null);
+});
+
+// ---------- 默认布局端到端（读取真实 data/default.json） ----------
+// 户型：客厅为大 L 形，卧室A 由 w4/wmvnptgj9_1/wmvnptk6r_2/w3 段2 围成。
+// wmvnptk6r_2 的 A 面朝客厅（显示反向，左边界=end 接 w3），是切点两侧房间不同的典型场景
+
+function defaultPlan() {
+  const data = JSON.parse(readFileSync(new URL('../data/default.json', import.meta.url), 'utf8'));
+  const { segRooms, faceNav } = detectRooms(data.walls);
+  return {
+    walls: data.walls,
+    wallSegments: buildWallSegments(segRooms, data.walls),
+    faceNav,
+  };
+}
+
+// 视图引用一致性比较：wallId + face + 范围 t0/t1（不能只比较墙 ID）
+function sameView(a, b) {
+  if (!a || !b) return a === b;
+  if (a.wallId !== b.wallId || a.face !== b.face) return false;
+  const sa = a.seg || { t0: 0, t1: 1 }, sb = b.seg || { t0: 0, t1: 1 };
+  return Math.abs(sa.t0 - sb.t0) < 1e-9 && Math.abs(sa.t1 - sb.t1) < 1e-9;
+}
+
+function adjOf(plan, v) {
+  return adjacentWallViews(plan.walls, plan.wallSegments, v.wallId, v.face, v.seg, plan.faceNav);
+}
+
+function viewText(v) {
+  if (!v) return 'null';
+  const partial = v.seg && (v.seg.t0 > 1e-9 || v.seg.t1 < 1 - 1e-9);
+  return `${v.wallId}/${v.face === 0 ? 'A' : 'B'}${partial ? ` 段${v.seg.index + 1}` : ' 整面'}`;
+}
+
+// 有效面范围总数（闭环遍历的最大步数保障）
+function totalFaceRanges(plan) {
+  let n = 0;
+  for (const w of plan.walls) {
+    const segs = segmentsForWall(plan.wallSegments, w.id);
+    n += buildFaceRanges(segs, 0).length + buildFaceRanges(segs, 1).length;
+  }
+  return n;
+}
+
+test('默认布局精确回归：wmvnptk6r_2/A 左邻 = w3/B 段1（客厅侧）', () => {
+  const plan = defaultPlan();
+  const adj = adjacentWallViews(plan.walls, plan.wallSegments, 'wmvnptk6r_2', 0, null, plan.faceNav);
+  // 左边界 = end (1.8, 3.7)，接 w3 的 t≈0.8 切点；须取切点左侧客厅侧的 B 面，而非外侧 A 面段2
+  assert.ok(adj.left, '应能找到左邻');
+  assert.equal(adj.left.wallId, 'w3');
+  assert.equal(adj.left.face, 1);
+  assert.equal(adj.left.seg.index, 0);
+  assert.ok(Math.abs(adj.left.seg.t0 - 0) < 1e-9);
+  assert.ok(Math.abs(adj.left.seg.t1 - 0.8) < 1e-6);
+  // 右边界 = start (1.8, 2.355)，接 wmvnptgj9_1 的客厅侧 A 面
+  assert.equal(adj.right.wallId, 'wmvnptgj9_1');
+  assert.equal(adj.right.face, 0);
+});
+
+test('默认布局客厅闭环：从 wmvnptk6r_2/A 连续向左经 6 个视图回到起点', () => {
+  const plan = defaultPlan();
+  const start = { wallId: 'wmvnptk6r_2', face: 0, seg: null };
+  const expected = [
+    'wmvnptk6r_2/A 整面',
+    'w3/B 段1',                 // [0, 0.8]，客厅侧
+    'w2/B 整面',
+    'w1/B 整面',                // 客厅侧连续面范围（跨过 wmvnpv2bb_6 的 T 接点不跳走）
+    'w4/B 段2',                 // 客厅侧面范围 [0.3597, 1]
+    'wmvnptgj9_1/A 整面',
+  ];
+  const maxSteps = totalFaceRanges(plan) + 1;
+  const loop = [start];
+  let cur = start;
+  for (let i = 0; i < maxSteps; i++) {
+    const next = adjOf(plan, cur).left;
+    if (!next) break;
+    loop.push(next);
+    if (sameView(next, start)) break;
+    cur = next;
+  }
+  assert.ok(sameView(loop[loop.length - 1], start), `应在有限步内回到起点，实际链：${loop.map(viewText).join(' → ')}`);
+  assert.equal(loop.length - 1, expected.length, `应恰好 ${expected.length} 步，实际：${loop.map(viewText).join(' → ')}`);
+  // 回到起点前不重复其他视图
+  const inner = loop.slice(0, -1);
+  for (let i = 0; i < inner.length; i++) {
+    for (let j = i + 1; j < inner.length; j++) {
+      assert.ok(!sameView(inner[i], inner[j]), `环上视图重复：${viewText(inner[i])}`);
+    }
+  }
+  assert.deepEqual(loop.slice(0, -1).map(viewText), expected);
+});
+
+test('默认布局闭环互逆：每对相邻视图 left/right 互为反函数，右行成反向环', () => {
+  const plan = defaultPlan();
+  const start = { wallId: 'wmvnptk6r_2', face: 0, seg: null };
+  // 先走出向左环（末元素为回到的起点，去掉后按环取模配对）
+  const loop = [start];
+  let cur = start;
+  for (let i = 0; i < totalFaceRanges(plan) + 1; i++) {
+    const next = adjOf(plan, cur).left;
+    if (!next) break;
+    if (sameView(next, start)) break;
+    loop.push(next);
+    cur = next;
+  }
+  assert.ok(loop.length > 2, '应成环');
+  // 互逆：相邻对 (v, next) 满足 adj(v).left = next 且 adj(next).right = v
+  for (let i = 0; i < loop.length; i++) {
+    const v = loop[i];
+    const next = loop[(i + 1) % loop.length];
+    const adjV = adjOf(plan, v);
+    const adjNext = adjOf(plan, next);
+    assert.ok(sameView(adjV.left, next), `${viewText(v)} 的左邻应为 ${viewText(next)}`);
+    assert.ok(sameView(adjNext.right, v), `${viewText(next)} 的右邻应为 ${viewText(v)}`);
+  }
+  // 向右走出反向环：逆序且相邻关系同样互逆
+  const reverse = [start];
+  cur = start;
+  for (let i = 0; i < totalFaceRanges(plan) + 1; i++) {
+    const next = adjOf(plan, cur).right;
+    if (!next) break;
+    if (sameView(next, start)) break;
+    reverse.push(next);
+    cur = next;
+  }
+  const expectedReverse = [start, ...loop.slice(1).reverse()];
+  assert.equal(reverse.length, expectedReverse.length);
+  for (let i = 0; i < reverse.length; i++) {
+    assert.ok(sameView(reverse[i], expectedReverse[i]),
+      `反向环第 ${i} 项应为 ${viewText(expectedReverse[i])}，实际 ${viewText(reverse[i])}`);
+  }
+});
+
+test('默认布局当前段终点不串房间：w3/B 段1 的两端都用客厅面，不在 t1 取卧室A', () => {
+  const plan = defaultPlan();
+  const planSegs = segmentsForWall(plan.wallSegments, 'w3');
+  const seg1 = buildFaceRanges(planSegs, 1)[0]; // w3/B 段1 [0, 0.8]，右边界即房间变化切点
+  assert.ok(Math.abs(seg1.t1 - 0.8) < 1e-6);
+  const v = { wallId: 'w3', face: 1, seg: { id: seg1.id, wallId: 'w3', index: seg1.index, t0: seg1.t0, t1: seg1.t1 } };
+  const adj = adjacentWallViews(plan.walls, plan.wallSegments, v.wallId, v.face, v.seg, plan.faceNav);
+  // 左邻 w2/B、右邻 wmvnptk6r_2/A：都属客厅，不得因 t1=0.8 是切点而取到卧室A侧的邻墙/面
+  assert.ok(sameView(adj.left, { wallId: 'w2', face: 1, seg: null }));
+  assert.ok(sameView(adj.right, { wallId: 'wmvnptk6r_2', face: 0, seg: null }));
+});
+
+test('默认布局 T 型宿主墙合并：w2/B 的左邻是 w1/B 整面合并范围', () => {
+  const plan = defaultPlan();
+  // w1 被下方 T 接点拆成 3 个逻辑段，但客厅侧（B 面）房间不变 → 邻墙须返回合并后的整面 [0,1]
+  const w1Ranges = buildFaceRanges(segmentsForWall(plan.wallSegments, 'w1'), 1);
+  assert.equal(w1Ranges.length, 1, 'w1/B 应合并为单个面范围');
+  assert.ok(Math.abs(w1Ranges[0].t0) < 1e-9 && Math.abs(w1Ranges[0].t1 - 1) < 1e-9);
+  const adj = adjacentWallViews(plan.walls, plan.wallSegments, 'w2', 1, null, plan.faceNav);
+  assert.ok(adj.left, 'w2/B 应有左邻');
+  assert.equal(adj.left.wallId, 'w1');
+  assert.equal(adj.left.face, 1);
+  assert.equal(adj.left.seg.index, 0);
+  assert.ok(Math.abs(adj.left.seg.t0) < 1e-9 && Math.abs(adj.left.seg.t1 - 1) < 1e-9, '应为整面合并范围，而非某个逻辑子段');
+});
+
+test('T/X 接点候选消歧：墙数组顺序不影响邻墙结果', () => {
+  const plan = defaultPlan();
+  const shuffled = { ...plan, walls: [...plan.walls].reverse() };
+  for (const w of plan.walls) {
+    for (const face of [0, 1]) {
+      const a = adjacentWallViews(plan.walls, plan.wallSegments, w.id, face, null, plan.faceNav);
+      const b = adjacentWallViews(shuffled.walls, shuffled.wallSegments, w.id, face, null, shuffled.faceNav);
+      assert.ok(sameView(a.left, b.left) && sameView(a.right, b.right),
+        `墙 ${w.id}/${face === 0 ? 'A' : 'B'} 的邻墙应与数组顺序无关：${viewText(a.left)}/${viewText(a.right)} vs ${viewText(b.left)}/${viewText(b.right)}`);
+    }
+  }
+});
+
+test('开放几何：共线延续沿面环接续为邻墙，悬空端无邻墙', () => {
+  // 两条共线悬空墙组成开口链：w1/B 的右邻沿面环接到 w2/B，左端悬空无邻墙
+  const walls = [
+    { id: 'w1', start: [0, 0], end: [2, 0], height: 2.8, thickness: 0.2 },
+    { id: 'w2', start: [2, 0], end: [4, 0], height: 2.8, thickness: 0.2 },
+  ];
+  const { segRooms, faceNav } = detectRooms(walls);
+  const wallSegments = buildWallSegments(segRooms, walls);
+  const adj = adjacentWallViews(walls, wallSegments, 'w1', 1, null, faceNav);
+  assert.equal(adj.left, null);
+  assert.ok(adj.right, '共线延续应沿面环接到 w2');
+  assert.equal(adj.right.wallId, 'w2');
+  assert.equal(adj.right.face, 1);
+  // 反向同样成立
+  const adj2 = adjacentWallViews(walls, wallSegments, 'w2', 1, null, faceNav);
+  assert.ok(sameView(adj2.left, { wallId: 'w1', face: 1, seg: null }));
+  assert.equal(adj2.right, null);
 });
 
 test('墙面角点：w3/w4 内角（面线交点在房间内侧）', () => {

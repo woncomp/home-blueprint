@@ -37,6 +37,7 @@ export class WallFaceDialog {
     this.snapGuideH = null;
     this.views = null;      // 三墙视图记录（render 时计算）
     this.wallSegments = null;
+    this.faceNav = null;    // detectRooms 面环导航（与 wallSegments 同步缓存）
     this._centerPending = false;
 
     document.getElementById('wallface-close').addEventListener('click', () => this.close());
@@ -81,6 +82,7 @@ export class WallFaceDialog {
     this.dragging = null;
     this.snapGuideH = null;
     this.wallSegments = null;
+    this.faceNav = null;
     this.views = null;
     this._centerPending = true;
     this.dialog.classList.remove('hidden');
@@ -117,8 +119,9 @@ export class WallFaceDialog {
   computeViews() {
     const walls = this.data.walls || [];
     if (!this.wallSegments) {
-      const { segRooms } = detectRooms(walls);
+      const { segRooms, faceNav } = detectRooms(walls);
       this.wallSegments = buildWallSegments(segRooms, walls);
+      this.faceNav = faceNav;
     }
     const mk = (role, wallId, face, seg) => {
       const wall = walls.find(w => w.id === wallId);
@@ -132,7 +135,7 @@ export class WallFaceDialog {
         reversed: face === 0, // 面对墙面：B 面 start→end 从左到右，A 面反向
       };
     };
-    const adj = adjacentWallViews(walls, this.wallSegments, this.wallId, this.face, this.seg);
+    const adj = adjacentWallViews(walls, this.wallSegments, this.wallId, this.face, this.seg, this.faceNav);
     this.views = [
       mk('left', adj.left && adj.left.wallId, adj.left && adj.left.face, adj.left && adj.left.seg),
       mk('active', this.wallId, this.face, this.seg),

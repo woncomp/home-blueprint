@@ -359,25 +359,58 @@ function pickNeighborFace(candWall, candSeg, room, towardDir) {
   return best;
 }
 
-// 面向墙面视角（B 面 start→end 从左到右，A 面反向展开）下，当前墙段左右边界处的相邻墙面。
-// 返回 { left, right }，每项为 { wallId, face, seg } 或 null；seg 为逻辑墙段快照。
-// walls：墙数组；wallSegments：buildWallSegments 的结果；seg 为当前墙段快照（可带 index/t0/t1，可 null）
-export function adjacentWallViews(walls, wallSegments, wallId, face, seg) {
+// detectRooms 输出的 faceNav 缺省时的懒计算入口（wallface 等调用方应缓存复用）
+export function buildFaceNav(walls) {
+  return detectRooms(walls).faceNav;
+}
+
+// 面是否可进行面环导航：房间面与外平面可导航（外平面即沿建筑外圈走）；
+// 被面积过滤掉的微面与缺失面不可导航（走几何回退）
+function faceNavigable(nav, fi) {
+  if (fi == null) return false;
+  return nav.faceKeys[fi] != null || fi === nav.exteriorIdx;
+}
+
+// 范围端点 tEnd 处的原子边：端点落在其 [t0,t1]（含容差）内，且原子边整体落在当前范围
+// [rT0,rT1] 内（区间包含，切点两侧取范围内的那条）。找不到返回 null
+function atomicEdgeAtRangeEnd(edges, tEnd, rT0, rT1) {
+  let best = null;
+  for (const e of edges || []) {
+    if (e.t0 - 1e-9 <= tEnd && tEnd <= e.t1 + 1e-9 &&
+        rT0 - 1e-9 <= e.t0 && e.t1 <= rT1 + 1e-9) {
+      if (!best || e.t1 - e.t0 > best.t1 - best.t0) best = e;
+    }
+  }
+  return best;
+}
+
+// 面向墙面视角（B 面 start→end 从左到右，A 面反向展开）下，当前墙面左右边界处的相邻墙面。
+// 邻墙定义为"同一拓扑面（房间或外平面）的有向边界环上的前驱/后继"：显示半边的可见面在
+// 屏幕右侧，面环半边（detectRooms 遍历方向）保持面在左侧，恰为显示方向的反向 ——
+// 因此显示左邻 = 面环 next（显示左端原子边），显示右邻 = 面环 prev（显示右端原子边）；
+// 邻墙的 A/B 面由目标半边与墙方向是否同向直接确定（同向=A，反向=B）。
+// 返回 { left, right }，每项为 { wallId, face, seg } 或 null；seg 为合并后的面范围段快照。
+// walls：墙数组；wallSegments：buildWallSegments 的结果；seg 为当前面范围段快照
+// （可带 index/t0/t1；null 视为整墙，两端各自按所在面导航）；
+// faceNav：detectRooms 输出的面环导航（缺省时内部现算）。
+// 仅当端点处没有可导航的有效面（微面/退化墙/过期范围）时回退几何选面；
+// 可导航面上查找失败如实返回 null 并输出诊断，不静默改选其他面。
+export function adjacentWallViews(walls, wallSegments, wallId, face, seg, faceNav) {
   const empty = { left: null, right: null };
   const wall = (walls || []).find(w => w.id === wallId);
   if (!wall) return empty;
-  const segs = segmentsForWall(wallSegments, wallId);
+  const nav = faceNav || buildFaceNav(walls);
   const t0 = seg ? seg.t0 : 0;
   const t1 = seg ? seg.t1 : 1;
   const [dx, dz] = wallDir(wall);
-  const endPoint = t => [wall.start[0] + (wall.end[0] - wall.start[0]) * t,
-                         wall.start[1] + (wall.end[1] - wall.start[1]) * t];
   const displayDir = face === 1 ? [dx, dz] : [-dx, -dz]; // 显示坐标左→右的平面方向
 
-  const findNeighbor = (tEnd, towardDisplay) => {
+  // 几何回退（best-effort，不承诺房间闭环）：沿用切点候选 + 转角评分 + 法线选面
+  const findNeighborByGeometry = (tEnd, towardDisplay) => {
+    const endPoint = t => [wall.start[0] + (wall.end[0] - wall.start[0]) * t,
+      wall.start[1] + (wall.end[1] - wall.start[1]) * t];
     const [px, pz] = endPoint(tEnd);
-    // 该边界点所在墙段的可见侧房间 key（开放/外侧面为 null）
-    const boundarySeg = segOfNode(segs, tEnd);
+    const boundarySeg = segOfNode(segmentsForWall(wallSegments, wallId), tEnd);
     const room = boundarySeg ? (face === 0 ? boundarySeg.left : boundarySeg.right) : null;
     let best = null;
     for (const cand of walls) {
@@ -405,12 +438,60 @@ export function adjacentWallViews(walls, wallSegments, wallId, face, seg) {
     };
   };
 
+  // 单侧求解：useNext=true 求左邻（面环 next），false 求右邻（面环 prev）。
+  // 环上回弹到当前墙（悬空端/孤立墙）是正常的"无邻墙"，静默返回 null；
+  // 其余查找失败属数据异常，输出诊断后如实返回 null，不静默改选其他面
+  const findSide = (tEnd, useNext) => {
+    const endEdge = atomicEdgeAtRangeEnd(nav.edgesByWall.get(wallId), tEnd, t0, t1);
+    const side = useNext ? 'left' : 'right';
+    const current = `${wallId}/${face === 0 ? 'A' : 'B'}`;
+    if (!endEdge) {
+      console.warn('[adjacentWallViews] 端点处无原子边，几何回退',
+        { current, side, tEnd, fallbackUsed: true });
+      return findNeighborByGeometry(tEnd, !useNext);
+    }
+    // 显示半边的可见面在屏幕右侧 → 面环半边为其反向（A 面 a→b，B 面 b→a）
+    const h = face === 0 ? endEdge.a + '>' + endEdge.b : endEdge.b + '>' + endEdge.a;
+    const fi = nav.faceIdx.get(h);
+    if (!faceNavigable(nav, fi)) {
+      console.warn('[adjacentWallViews] 可见面不可导航（微面/退化），几何回退',
+        { current, side, tEnd, fallbackUsed: true });
+      return findNeighborByGeometry(tEnd, !useNext);
+    }
+    const hTarget = useNext ? nav.next.get(h) : nav.prev.get(h);
+    const e = hTarget && nav.edgeOf.get(hTarget);
+    if (!e) {
+      console.warn('[adjacentWallViews] 面环导航数据缺失，返回 null',
+        { current, side, tEnd, faceIdx: fi, fallbackUsed: false });
+      return null;
+    }
+    if (e.wallId === wallId) return null;
+    const targetFace = hTarget === e.a + '>' + e.b ? 0 : 1;
+    if (nav.faceIdx.get(hTarget) !== fi) {
+      console.warn('[adjacentWallViews] 目标半边脱离当前面环，返回 null',
+        { current, side, target: `${e.wallId}/${targetFace === 0 ? 'A' : 'B'}`, fallbackUsed: false });
+      return null;
+    }
+    const range = buildFaceRanges(segmentsForWall(wallSegments, e.wallId), targetFace)
+      .find(r => r.t0 - 1e-9 <= e.t0 && e.t1 <= r.t1 + 1e-9);
+    if (!range) {
+      console.warn('[adjacentWallViews] 目标原子边无对应面范围，返回 null',
+        { current, side, target: `${e.wallId}/${targetFace === 0 ? 'A' : 'B'}`, fallbackUsed: false });
+      return null;
+    }
+    return {
+      wallId: e.wallId,
+      face: targetFace,
+      seg: { id: range.id, wallId: range.wallId, index: range.index, t0: range.t0, t1: range.t1 },
+    };
+  };
+
   // B 面：左边界=t0、右边界=t1；A 面反向：左边界=t1、右边界=t0
   const leftT = face === 1 ? t0 : t1;
   const rightT = face === 1 ? t1 : t0;
   return {
-    left: findNeighbor(leftT, false),
-    right: findNeighbor(rightT, true),
+    left: findSide(leftT, true),
+    right: findSide(rightT, false),
   };
 }
 
@@ -500,6 +581,7 @@ export function detectRooms(walls) {
   const visited = new Set();
   const faces = [];
   const halfFace = new Map(); // 有向半边 → 面序号（记录每条半边左侧的房间面）
+  const halfNext = new Map(); // 有向半边 → 同一面环上的后继半边（遍历顺序即环序）
   for (const e of edgeInfos) {
     for (const [kFrom, kTo] of [[e.a, e.b], [e.b, e.a]]) {
       const halfKey = kFrom + '>' + kTo;
@@ -519,13 +601,15 @@ export function detectRooms(walls) {
         });
         const n = vt.angles.length;
         const next = vt.angles[(jdx + 1) % n];
+        const nextOther = next.e.a === curTo ? next.e.b : next.e.a;
+        halfNext.set(curFrom + '>' + curTo, curTo + '>' + nextOther);
         pts.push([vt.x, vt.z]);
         curFrom = curTo;
-        const nextOther = next.e.a === curFrom ? next.e.b : next.e.a;
         curTo = nextOther;
         if (curFrom === kFrom && curTo === kTo) break;
       }
-      if (pts.length >= 3) faces.push(pts);
+      // 退化环（悬空墙两侧往返，仅 2 点）也占一个面序号，保证 halfFace/halfNext 与 faces 对齐
+      faces.push(pts);
     }
   }
 
@@ -554,6 +638,21 @@ export function detectRooms(walls) {
     const right = faceKey[halfFace.get(e.b + '>' + e.a)] ?? null;
     arr.push({ t0: e.t0, t1: e.t1, left, right });
   }
+  // 面环导航：邻墙计算沿"同一拓扑面的有向边界环"取前驱/后继，不再按切点位置猜邻接。
+  // halfKey 约定 `${from}>${to}`（顶点 key，与内部遍历一致）；
+  // a→b（与墙同向）的半边属于 A 面侧，b→a 属于 B 面侧；环上一条半边的面在它的左侧
+  const halfPrev = new Map();
+  for (const [h, nh] of halfNext) halfPrev.set(nh, h);
+  const halfEdgeOf = new Map();
+  const edgesByWall = new Map();
+  for (const e of edgeInfos) {
+    const ref = { wallId: e.wallId, t0: e.t0, t1: e.t1, a: e.a, b: e.b };
+    halfEdgeOf.set(e.a + '>' + e.b, ref);
+    halfEdgeOf.set(e.b + '>' + e.a, ref);
+    let arr = edgesByWall.get(e.wallId);
+    if (!arr) { arr = []; edgesByWall.set(e.wallId, arr); }
+    arr.push(ref);
+  }
   return {
     rooms: rooms.map(f => ({
       key: canonicalKey(f.pts),
@@ -561,6 +660,15 @@ export function detectRooms(walls) {
       area: f.area,
     })),
     segRooms,
+    faceNav: {
+      edgeOf: halfEdgeOf,   // halfKey -> 原子边 { wallId, t0, t1, a, b }（t0/t1 为整墙 0~1）
+      next: halfNext,       // halfKey -> 面环后继 halfKey
+      prev: halfPrev,       // halfKey -> 面环前驱 halfKey
+      faceIdx: halfFace,    // halfKey -> 面序号
+      faceKeys: faceKey,    // 面序号 -> 房间 key（外平面/微面为 null）
+      exteriorIdx,          // 外平面面序号
+      edgesByWall,          // wallId -> 原子边数组（按 t 升序）
+    },
   };
 }
 
@@ -662,35 +770,51 @@ export function segOfNode(segs, pos) {
 // 未被接触的一面沿墙房间不变 → 合并为整面范围（可整面悬停/展开）；
 // X 型交叉两面房间都在交点变化 → 两面都拆。边界取 stem 中心线（与
 // 逻辑段一致），落在接头覆盖条内的节点仍归属某一侧，不会失联。
+// face：0=A 面（left 侧）/1=B 面（right 侧）。返回：
+// [{ id, wallId, face, index, t0, t1, faceKey }]，faceKey 为该面侧房间 key（外侧面为 null）
+export function buildFaceRanges(segs, face) {
+  const side = face === 0 ? 'left' : 'right';
+  const groups = [];
+  for (const s of segs || []) {
+    const last = groups[groups.length - 1];
+    if (last && last.segs[0][side] === s[side]) last.segs.push(s);
+    else groups.push({ segs: [s] });
+  }
+  return groups.map((grp, g) => ({
+    id: `${grp.segs[0].wallId}#${g}`,
+    wallId: grp.segs[0].wallId,
+    face,
+    index: g,
+    t0: grp.segs[0].t0,
+    t1: grp.segs[grp.segs.length - 1].t1,
+    faceKey: grp.segs[0][side] ?? null,
+  }));
+}
+
+// 按位置查面范围段（buildFaceRanges 的兼容包装）。
 // pos 为原始墙 0~1 坐标，半开区间归属与 segOfNode 一致（切点归右侧）；
 // 返回段快照 {id, wallId, index, t0, t1}，无段时返回 null
 export function faceSegOf(segs, face, pos) {
-  if (!segs || !segs.length) return null;
-  const side = face === 0 ? 'left' : 'right';
-  const groups = [];
-  for (const s of segs) {
-    const last = groups[groups.length - 1];
-    if (last && last[0][side] === s[side]) last.push(s);
-    else groups.push([s]);
-  }
+  const ranges = buildFaceRanges(segs, face);
+  if (!ranges.length) return null;
   const t = Math.min(1, Math.max(0, pos));
-  for (let g = 0; g < groups.length; g++) {
-    const first = groups[g][0], lastSeg = groups[g][groups[g].length - 1];
-    const inRange = g === groups.length - 1
-      ? t >= first.t0 - 1e-9 && t <= lastSeg.t1 + 1e-9
-      : t >= first.t0 - 1e-9 && t < lastSeg.t1 - 1e-9;
+  for (let g = 0; g < ranges.length; g++) {
+    const r = ranges[g];
+    const inRange = g === ranges.length - 1
+      ? t >= r.t0 - 1e-9 && t <= r.t1 + 1e-9
+      : t >= r.t0 - 1e-9 && t < r.t1 - 1e-9;
     if (inRange) {
-      return { id: `${first.wallId}#${g}`, wallId: first.wallId, index: g, t0: first.t0, t1: lastSeg.t1 };
+      return { id: r.id, wallId: r.wallId, index: r.index, t0: r.t0, t1: r.t1 };
     }
   }
   // 防御：浮点间隙导致未命中时取最近的组
   let best = 0, bestD = Infinity;
-  groups.forEach((grp, g) => {
-    const d = t < grp[0].t0 ? grp[0].t0 - t : t > grp[grp.length - 1].t1 ? t - grp[grp.length - 1].t1 : 0;
+  ranges.forEach((r, g) => {
+    const d = t < r.t0 ? r.t0 - t : t > r.t1 ? t - r.t1 : 0;
     if (d < bestD) { bestD = d; best = g; }
   });
-  const grp = groups[best];
-  return { id: `${grp[0].wallId}#${best}`, wallId: grp[0].wallId, index: best, t0: grp[0].t0, t1: grp[grp.length - 1].t1 };
+  const r = ranges[best];
+  return { id: r.id, wallId: r.wallId, index: r.index, t0: r.t0, t1: r.t1 };
 }
 
 // 段内坐标换算：t（原始墙 0~1）↔ 段内 0~1
