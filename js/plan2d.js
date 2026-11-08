@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE, detectRooms, pointInRoom, resolveRoomNames } from './model.js';
+import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE, detectRooms, pointInRoom, resolveRoomNames, roomLabelPoint, roomLabelUV, roomBBox } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -164,7 +164,7 @@ export class Plan2D {
       el('line', { x1: 0, y1: sy, x2: this.w, y2: sy, class: z % 5 === 0 ? 'grid-line-major' : 'grid-line' }, gGrid);
     }
 
-    // 房间：半透明填充 + 居中名称标签（拾取走几何判定，元素不参与交互）
+    // 房间：半透明填充 + 名称标签（默认在质心，可在户型编辑中拖动调整位置）
     const { rooms } = detectRooms(walls);
     this.rooms = rooms;
     const roomNames = resolveRoomNames(this.data(), rooms);
@@ -176,12 +176,10 @@ export class Plan2D {
         points: room.points.map(p => this.toScreen(p).map(v => v.toFixed(1)).join(',')).join(' '),
         class: 'plan-room-fill' + (isSel ? ' selected' : isHov ? ' hover' : ''),
       }, gRooms);
-      let cx = 0, cy = 0;
-      for (const p of room.points) { const [sx, sy] = this.toScreen(p); cx += sx; cy += sy; }
-      cx /= room.points.length; cy /= room.points.length;
+      const [sx, sy] = this.toScreen(roomLabelPoint(room, this.data()));
       const t = el('text', {
-        x: cx, y: cy, dy: '0.35em', class: 'plan-room-label',
-        'data-room-index': i,
+        x: sx, y: sy, dy: '0.35em', class: 'plan-room-label',
+        'data-room-key': room.key,
       }, gRooms);
       t.textContent = roomNames.get(room.key);
     });
@@ -342,7 +340,7 @@ export class Plan2D {
 
   updateHint() {
     const hints = {
-      select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
+      select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；拖动房间名称可调整其位置；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
       ortho: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '正交画墙：点击起点（自动锁定水平/竖直，Alt 关闭吸附）',
       free: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '任意画墙：点击起点（可任意角度，Alt 关闭吸附）',
       door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；可连续添加，Esc 退出',
@@ -356,6 +354,7 @@ export class Plan2D {
     if (this.tool === 'ortho' || this.tool === 'free' || this.tool === 'door') c = 'crosshair';
     else if (this.tool === 'delete') c = 'not-allowed';
     else if (this.drag && this.drag.type === 'pan') c = 'grabbing';
+    else if (this.drag && this.drag.type === 'roomLabel') c = 'move';
     else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door' || this.hover.type === 'room') ? 'pointer' : 'move';
     this.svg.style.cursor = c;
   }
@@ -588,6 +587,22 @@ export class Plan2D {
     const w = this.toWorld(sx, sy);
 
     if (this.tool === 'select') {
+      // 房间名标签：按下即进入拖动（元素级判定，优先于几何拾取）
+      const labelEl = e.target && e.target.closest ? e.target.closest('.plan-room-label') : null;
+      if (labelEl) {
+        const room = (this.rooms || []).find(r => r.key === labelEl.dataset.roomKey);
+        if (room) {
+          const orig = (this.data().roomLabelPos || {})[room.key] || null;
+          this.selectRoom(room.key);
+          this.drag = {
+            type: 'roomLabel', roomKey: room.key, startW: w, bbox: roomBBox(room),
+            startUV: roomLabelUV(room, this.data()), orig, cur: orig,
+            cursor: [sx, sy], dimText: null,
+          };
+          this.updateCursor();
+          return;
+        }
+      }
       const g = this.pickHandle(sx, sy);
       if (g) {
         this.selectWall(g.ends[0].wallId);
@@ -729,6 +744,21 @@ export class Plan2D {
       return;
     }
 
+    if (d.type === 'roomLabel') {
+      // 名称标签拖动：指针位移换算为包围盒 0~1 归一化坐标，0.01 吸附（Alt 关闭），回到 0.5/0.5 清除记录
+      let du = (w[0] - d.startW[0]) / d.bbox.w, dv = (w[1] - d.startW[1]) / d.bbox.d;
+      if (!e.altKey) { du = Math.round(du * 100) / 100; dv = Math.round(dv * 100) / 100; }
+      const u = Math.min(1, Math.max(0, d.startUV[0] + du));
+      const v = Math.min(1, Math.max(0, d.startUV[1] + dv));
+      d.cur = [u, v];
+      const all = this.data().roomLabelPos || (this.data().roomLabelPos = {});
+      if (u === 0.5 && v === 0.5) delete all[d.roomKey];
+      else all[d.roomKey] = d.cur;
+      d.dimText = `名称位置 ${u.toFixed(2)}, ${v.toFixed(2)}`;
+      this.render();
+      return;
+    }
+
     if (d.type === 'box') {
       // 强电箱沿墙拖动（与 3D 编辑一致的最小边距 0.3m）
       const box = findBreakerBox(this.data());
@@ -862,6 +892,8 @@ export class Plan2D {
     } else if (d.type === 'door') {
       const door = (this.data().doors || []).find(x => x.id === d.doorId);
       changed = !!door && (door.pos !== d.orig.pos || door.wall !== d.orig.wall);
+    } else if (d.type === 'roomLabel') {
+      changed = JSON.stringify(d.cur) !== JSON.stringify(d.orig);
     }
     this.updateCursor();
     this.render();
@@ -878,6 +910,12 @@ export class Plan2D {
     } else if (d.type === 'door') {
       const door = (this.data().doors || []).find(x => x.id === d.doorId);
       if (door) { door.wall = d.orig.wall; door.pos = d.orig.pos; }
+    } else if (d.type === 'roomLabel') {
+      const all = this.data().roomLabelPos;
+      if (all) {
+        if (d.orig) all[d.roomKey] = d.orig;
+        else delete all[d.roomKey];
+      }
     }
     this.drag = null;
   }

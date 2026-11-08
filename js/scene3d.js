@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
-  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE, resolveRoomNames,
+  computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE, resolveRoomNames, roomLabelPoint,
   buildWallSegments, segmentsForWall, faceSegOf, wirePathPoints,
 } from './model.js';
 import { buildWallShell, locateWall, exposedFaceSpans } from './wallgeometry.js';
@@ -164,18 +164,16 @@ export class Scene3D {
       this.staticGroup.add(mesh);
       this._pickables.push(mesh);
 
-      // 中心点与标签
-      let cx = 0, cz = 0;
-      for (const [x, z] of room.points) { cx += x; cz += z; }
-      cx /= room.points.length; cz /= room.points.length;
+      // 名称标签位置（与户型编辑拖动共用 roomLabelPos 0~1 归一化坐标）
+      const [lx, lz] = roomLabelPoint(room, this.data);
       const name = names.get(room.key);
       let label;
       if (this.roomLabelFloor) {
         label = makeFloorTextMesh(name, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
-        label.position.set(cx, 0.02, cz);
+        label.position.set(lx, 0.02, lz);
       } else {
         label = makeTextSprite(name, '#ffffff', 'rgba(40,45,55,0.4)', 256, 56, 0.5);
-        label.position.set(cx, 0.3, cz); // 略高于地面悬浮（标签高 0.5，底边约离地 5cm）
+        label.position.set(lx, 0.3, lz); // 略高于地面悬浮（标签高 0.5，底边约离地 5cm）
       }
       this.labelGroup.add(label);
     });

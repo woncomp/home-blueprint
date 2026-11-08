@@ -721,6 +721,35 @@ export function resolveRoomNames(data, rooms) {
   return result;
 }
 
+// 房间名称显示位置：roomLabelPos 记录 0~1 归一化坐标（相对房间包围盒，[0.5,0.5] 为盒中心），
+// 房间尺寸变化时标签按相同比例跟随；未记录时退回多边形质心。返回世界坐标 [x, z]。
+export function roomLabelPoint(room, data) {
+  const b = roomBBox(room);
+  const rec = (data.roomLabelPos || {})[room.key];
+  if (rec) return [b.minX + rec[0] * b.w, b.minZ + rec[1] * b.d];
+  let cx = 0, cz = 0;
+  for (const [x, z] of room.points) { cx += x; cz += z; }
+  return [cx / room.points.length, cz / room.points.length];
+}
+
+// 当前显示位置的归一化坐标（无记录时为质心换算值），供拖动起点与面板回显。
+export function roomLabelUV(room, data) {
+  const b = roomBBox(room);
+  const [x, z] = roomLabelPoint(room, data);
+  return [(x - b.minX) / b.w, (z - b.minZ) / b.d];
+}
+
+export function roomBBox(room) {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const [x, z] of room.points) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  return { minX, minZ, w: Math.max(maxX - minX, 1e-6), d: Math.max(maxZ - minZ, 1e-6) };
+}
+
 // ---------- 线路计算 ----------
 
 // 返回 { circuits: [{ breakerId, label, color, wireIds:Set, nodeIds:Set, wallIds:Set }], wireCircuit: Map<wireId, idx>, nodeCircuit: Map<nodeId, idx>, wallsWithCircuit: Set<wallId> }

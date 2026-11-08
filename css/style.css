@@ -72,7 +72,7 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
 #plan-svg .plan-room-label {
   font-size: 13px; fill: #4a5568; text-anchor: middle;
   paint-order: stroke; stroke: rgba(255,255,255,0.85); stroke-width: 3;
-  pointer-events: none;
+  pointer-events: all; cursor: grab;
 }
 
 #overlay-hint {

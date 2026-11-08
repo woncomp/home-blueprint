@@ -1,5 +1,5 @@
 // 右侧信息栏：强电箱 2D 布局 + 选中实体信息/属性编辑
-import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, findBreakerBox } from './model.js';
+import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, findBreakerBox, roomLabelUV } from './model.js';
 
 export class Panel {
   constructor(dataProvider) {
@@ -311,10 +311,43 @@ export class Panel {
         this.emit('edited');
       });
       addRow('名称', input);
+      // 名称位置：0~1 归一化坐标（0.5 为房间包围盒中心），与户型编辑中拖动名称写入同一份数据
+      const [curU, curV] = room ? roomLabelUV(room, data) : [0.5, 0.5];
+      const posRow = document.createElement('div');
+      posRow.className = 'row';
+      posRow.innerHTML = '<span class="k">名称位置 (0~1)</span>';
+      const posVal = document.createElement('span');
+      posVal.className = 'v';
+      const mkPosInput = (val, axis) => {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.step = '0.01';
+        inp.min = '0';
+        inp.max = '1';
+        inp.value = val.toFixed(2);
+        inp.style.width = '56px';
+        inp.title = axis === 0 ? '左右位置（0.5 为房间横向中心）' : '前后位置（0.5 为房间纵向中心）';
+        inp.addEventListener('change', () => {
+          const v = parseFloat(inp.value);
+          if (!(v >= 0)) return;
+          const all = data.roomLabelPos || (data.roomLabelPos = {});
+          const cur = all[selection.id] ? [...all[selection.id]] : [curU, curV];
+          cur[axis] = Math.min(1, Math.max(0, v));
+          if (cur[0] === 0.5 && cur[1] === 0.5) delete all[selection.id];
+          else all[selection.id] = cur;
+          this.emit('edited');
+        });
+        return inp;
+      };
+      posVal.appendChild(mkPosInput(curU, 0));
+      posVal.appendChild(document.createTextNode(' / '));
+      posVal.appendChild(mkPosInput(curV, 1));
+      posRow.appendChild(posVal);
+      wrap.appendChild(posRow);
       const p = document.createElement('p');
       p.className = 'placeholder';
       p.style.marginTop = '6px';
-      p.textContent = '名称显示在 3D 场景与顶视图的房间中心；清空名称可恢复默认命名。';
+      p.textContent = '名称显示在 3D 场景与顶视图的房间中心；户型编辑中可直接拖动名称调整位置（0~1 相对房间，0.5 为中心），清空名称可恢复默认命名。';
       wrap.appendChild(p);
     }
   }
