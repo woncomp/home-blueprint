@@ -95,6 +95,17 @@ export class Panel {
       });
       item.appendChild(labelEl);
 
+      const sideBtn = document.createElement('button');
+      sideBtn.className = 'breaker-side-btn';
+      sideBtn.textContent = br.side === 'right' ? '右' : '左';
+      sideBtn.title = '出线方向：点击切换电线从箱体左侧或右侧伸出';
+      sideBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        br.side = br.side === 'right' ? 'left' : 'right';
+        this.emit('edited');
+      });
+      item.appendChild(sideBtn);
+
       const countEl = document.createElement('span');
       countEl.className = 'breaker-count';
       countEl.textContent = circuit ? `${circuit.wireIds.size} 段线` : '未接线';

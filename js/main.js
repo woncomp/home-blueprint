@@ -5,7 +5,7 @@ import { Panel } from './panel.js';
 import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, exportJson, importJsonFile } from './persistence.js';
-import { DEVICE_TYPES, createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight } from './model.js';
+import { DEVICE_TYPES, createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -248,12 +248,16 @@ function syncTerminals() {
   const box = findBreakerBox(app.data);
   if (!box) return;
   const n = box.breakers.length;
+  const wall = app.data.walls.find(w => w.id === box.wall);
+  const L = wall ? wallLen(wall) : 0;
   box.breakers.forEach((br, i) => {
     const node = app.data.nodes.find(x => x.id === br.terminal);
     if (!node) return;
     node.wall = box.wall;
     node.face = box.face;
-    node.pos = box.pos;
+    // 端子横向位置跟随线路出线方向（箱体左/右边缘）
+    const delta = breakerTerminalPosDelta(br.side);
+    node.pos = L > 0 ? Math.min(1, Math.max(0, box.pos + delta / L)) : box.pos;
     node.height = breakerTerminalHeight(i, n, box.height);
   });
 }

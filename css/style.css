@@ -104,6 +104,12 @@ html, body { height: 100%; font-family: "Microsoft YaHei", "PingFang SC", sans-s
   border: 1px solid #4a90d9; border-radius: 3px;
   font-size: 13px; outline: none;
 }
+.breaker-side-btn {
+  flex-shrink: 0; width: 22px; height: 20px; padding: 0;
+  border: 1px solid #ccc; border-radius: 4px;
+  background: #f5f5f5; color: #555; cursor: pointer; font-size: 11px;
+}
+.breaker-side-btn:hover { border-color: #4a90d9; color: #4a90d9; }
 .breaker-count { color: #999; font-size: 11px; flex-shrink: 0; }
 .add-breaker-btn {
   width: 100%; padding: 6px; border: 1px dashed #aaa; border-radius: 5px;

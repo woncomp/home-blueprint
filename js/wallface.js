@@ -5,7 +5,7 @@ import {
   wallLen, wallDir, nodeWorldPos, createNode, createWire,
   addLink, removeLink, linksOf, computeCircuits,
   detectRooms, buildWallSegments, adjacentWallViews,
-  DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE,
+  DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE, BREAKER_SIDE_INSET, breakerTerminalHeight,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -348,14 +348,16 @@ export class WallFaceDialog {
       x: bx, y: by, width: bw, height: bh,
       rx: 4, fill: '#3a4048', stroke: '#20242a', 'stroke-width': 1.5,
     }));
-    const t = el('text', { x: bx + bw / 2, y: by + 14, 'text-anchor': 'middle', 'font-size': 11, fill: '#cfe0f5' });
-    t.textContent = '⚡ 强电箱';
-    g.appendChild(t);
-    // 每个断路器一行 + 端子
+    const n = box.breakers.length;
+    const centerLocal = this.localOf(box, v);
+    const dotOff = BREAKER_BOX_SIZE.w / 2 - BREAKER_SIDE_INSET;
+    // 每个断路器一行（对齐端子真实高度）+ 左右边缘各一个端子圆点：
+    // 活动侧实心（电线出发点），另一侧空心，点击可切换出线方向
     box.breakers.forEach((br, i) => {
       const cIdx = this.circuits.circuits.findIndex(c => c.breakerId === br.id);
       const color = cIdx >= 0 ? this.circuits.circuits[cIdx].color : '#999';
-      const ry = by + 20 + i * 16;
+      const cy = this.heightY(breakerTerminalHeight(i, n, box.height));
+      const ry = cy - 6.5;
       g.appendChild(el('rect', {
         x: bx + 6, y: ry, width: bw - 12, height: 13,
         rx: 2, fill: '#2c313a', stroke: color, 'stroke-width': 1,
@@ -363,14 +365,26 @@ export class WallFaceDialog {
       const lt = el('text', { x: bx + 10, y: ry + 10, 'font-size': 9, fill: '#ddd' });
       lt.textContent = (br.label || `断路器${i + 1}`).slice(0, 8);
       g.appendChild(lt);
-      // 端子接头
-      const term = el('circle', {
-        cx: bx + bw - 8, cy: ry + 6.5, r: 4,
-        fill: color, stroke: '#fff', 'stroke-width': 1,
-        class: 'node', 'data-nodeid': br.terminal,
-      });
-      term.addEventListener('mousedown', e => this.onNodeMouseDown(e, br.terminal));
-      g.appendChild(term);
+      for (const [side, off] of [['left', -dotOff], ['right', dotOff]]) {
+        const active = (br.side || 'left') === side;
+        const dot = el('circle', {
+          cx: this.posX(v, centerLocal + off), cy, r: 4,
+          fill: active ? color : '#2c313a',
+          stroke: color, 'stroke-width': active ? 1.5 : 1,
+          class: 'node', 'data-nodeid': br.terminal, 'data-side': side,
+        });
+        dot.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          if (active) {
+            this.onNodeMouseDown(e, br.terminal);
+          } else {
+            br.side = side;
+            if (this.cbs.onChange) this.cbs.onChange();
+            this.render();
+          }
+        });
+        g.appendChild(dot);
+      }
     });
     // 选择工具下点击箱体本体 = 选中强电箱设备节点（其他工具保持原有冒泡行为）
     g.addEventListener('mousedown', e => {

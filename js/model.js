@@ -28,6 +28,14 @@ export function breakerTerminalHeight(i, n, boxCenterHeight) {
   return boxCenterHeight - BREAKER_BOX_SIZE.h / 2 + (i + 1) * unit;
 }
 
+// 端子出线方向：相对箱体中心沿墙偏移到左/右边缘（内缩 1cm），电线从该侧伸出；
+// side 缺省视为 'left'。返回米制偏移（右正左负）。
+export const BREAKER_SIDE_INSET = 0.01;
+export function breakerTerminalPosDelta(side) {
+  const sign = side === 'right' ? 1 : -1;
+  return sign * (BREAKER_BOX_SIZE.w / 2 - BREAKER_SIDE_INSET);
+}
+
 let idCounter = 1;
 export function genId(prefix) {
   return `${prefix}${Date.now().toString(36)}_${(idCounter++).toString(36)}`;
