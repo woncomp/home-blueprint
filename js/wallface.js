@@ -6,7 +6,7 @@ import {
   addLink, removeLink, linksOf, computeCircuits,
   detectRooms, buildWallSegments, adjacentWallViews,
   DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE, BREAKER_SIDE_INSET, breakerTerminalHeight,
-  clipDoorToSeg, DOOR_DEFAULT_HEIGHT,
+  clipDoorToSeg, DOOR_DEFAULT_HEIGHT, deviceDisplayColor,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -634,22 +634,23 @@ export class WallFaceDialog {
       const cColor = cIdx != null ? this.circuits.circuits[cIdx].color : '#666';
       let shape;
       if (node.type === 'device') {
-        const dt = DEVICE_TYPES[node.deviceType] || DEVICE_TYPES.socket;
+        // 插座颜色跟随所属线路，其余设备用类型色（deviceDisplayColor 内部处理）
+        const dColor = deviceDisplayColor(node, this.circuits);
         const g = el('g', { class: 'node', 'data-nodeid': node.id });
         if (node.deviceType === 'light') {
-          g.appendChild(el('circle', { cx: x, cy: y, r: 9, fill: dt.color, stroke: isSel ? '#ffee55' : '#333', 'stroke-width': isSel ? 3 : 1.5 }));
+          g.appendChild(el('circle', { cx: x, cy: y, r: 9, fill: dColor, stroke: isSel ? '#ffee55' : '#333', 'stroke-width': isSel ? 3 : 1.5 }));
           for (let i = 0; i < 8; i++) {
             const ang = i * Math.PI / 4;
             g.appendChild(el('line', {
               x1: x + Math.cos(ang) * 11, y1: y + Math.sin(ang) * 11,
               x2: x + Math.cos(ang) * 15, y2: y + Math.sin(ang) * 15,
-              stroke: dt.color, 'stroke-width': 1.5,
+              stroke: dColor, 'stroke-width': 1.5,
             }));
           }
         } else {
           g.appendChild(el('rect', {
             x: x - 8, y: y - 11, width: 16, height: 22, rx: 3,
-            fill: dt.color, stroke: isSel ? '#ffee55' : '#333', 'stroke-width': isSel ? 3 : 1.5,
+            fill: dColor, stroke: isSel ? '#ffee55' : '#333', 'stroke-width': isSel ? 3 : 1.5,
           }));
           if (node.deviceType === 'socket') {
             g.appendChild(el('circle', { cx: x - 3, cy: y - 3, r: 1.5, fill: '#fff' }));

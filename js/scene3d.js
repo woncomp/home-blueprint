@@ -4,7 +4,7 @@ import { FocusControls } from './controls.js';
 import {
   wallLen, wallDir, wallNormal, nodeWorldPos, detectRooms,
   computeCircuits, DEVICE_TYPES, pointInRoom, findBreakerBox, BREAKER_BOX_SIZE, resolveRoomNames, roomLabelPoint,
-  buildWallSegments, segmentsForWall, faceSegOf, wirePathPoints,
+  buildWallSegments, segmentsForWall, faceSegOf, wirePathPoints, deviceDisplayColor,
 } from './model.js';
 import { buildWallShell, locateWall, exposedFaceSpans } from './wallgeometry.js';
 
@@ -427,10 +427,10 @@ export class Scene3D {
       if (this.highlightCircuit != null && cIdx !== this.highlightCircuit) opacity = 0.15;
 
       if (node.type === 'device') {
-        const dt = DEVICE_TYPES[node.deviceType] || DEVICE_TYPES.socket;
         const geo = new THREE.BoxGeometry(0.14, 0.14, 0.06);
+        // 插座颜色跟随所属线路，其余设备用类型色（deviceDisplayColor 内部处理）
         const mat = new THREE.MeshLambertMaterial({
-          color: isSel ? 0xffee55 : new THREE.Color(dt.color), transparent: true, opacity,
+          color: isSel ? 0xffee55 : new THREE.Color(deviceDisplayColor(node, this.circuits)), transparent: true, opacity,
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.set(pos[0], pos[1], pos[2]);

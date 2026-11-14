@@ -954,6 +954,16 @@ export function computeCircuits(data) {
   return { circuits, wireCircuit, nodeCircuit, wallsWithCircuit };
 }
 
+// 设备显示颜色：插座始终跟随所属线路颜色（未接线路回退类型色），开关/灯具等保持类型色
+export function deviceDisplayColor(node, circuitInfo) {
+  const dt = DEVICE_TYPES[node.deviceType] || DEVICE_TYPES.socket;
+  if (node.deviceType === 'socket' && circuitInfo) {
+    const cIdx = circuitInfo.nodeCircuit.get(node.id);
+    if (cIdx != null) return circuitInfo.circuits[cIdx].color;
+  }
+  return dt.color;
+}
+
 // 从某节点出发找的电线
 export function wiresAt(data, nodeId) {
   return data.wires.filter(w => w.from === nodeId || w.to === nodeId);
