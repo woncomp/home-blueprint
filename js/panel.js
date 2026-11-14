@@ -249,9 +249,15 @@ export class Panel {
       p.className = 'placeholder';
       p.style.marginTop = '6px';
       p.textContent = this.mode === 'plan'
-        ? '顶视图中拖动门沿墙移动，靠近其他墙可换墙；Delete 删除。'
-        : '墙面展开视图中点击门洞可选中；Delete 删除，移动/换墙请在户型编辑中拖动。';
+        ? '顶视图中拖动门沿墙移动，靠近其他墙可换墙；Delete 或下方按钮删除。'
+        : '墙面展开视图中点击门洞可选中；Delete 或下方按钮删除，移动/换墙请在户型编辑中拖动。';
       wrap.appendChild(p);
+      const delDoor = document.createElement('button');
+      delDoor.className = 'tool-btn danger';
+      delDoor.style.marginTop = '8px';
+      delDoor.textContent = '删除门';
+      delDoor.addEventListener('click', () => this.emit('deleteDoor', door.id));
+      wrap.appendChild(delDoor);
     } else if (selection.kind === 'wire') {
       const wire = data.wires.find(w => w.id === selection.id);
       if (!wire) return;

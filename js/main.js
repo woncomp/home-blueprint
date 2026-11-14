@@ -192,6 +192,7 @@ panel.on('deleteWire', id => {
 panel.on('deleteNode', id => deleteNodeById(id));
 // 选中墙后在信息面板删除：复用独立删除函数，保留强电箱墙限制与级联清理
 panel.on('deleteWall', id => deleteWallById(id));
+panel.on('deleteDoor', id => deleteDoorById(id));
 
 // ---------- 删除操作 ----------
 function deleteNodeById(id) {
