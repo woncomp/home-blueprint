@@ -567,15 +567,11 @@ export class WallFaceDialog {
       if (this.mode === 'edit') {
         hit.addEventListener('mousedown', e => {
           e.stopPropagation();
-          if (this.tool === 'remove') {
-            this.deleteWire(wire.id);
-          } else {
-            this.selectedWireId = wire.id;
-            this.selectedNodeId = null;
-            this.selectedDoorId = null;
-            if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'wire', id: wire.id });
-            this.renderInfo();
-          }
+          this.selectedWireId = wire.id;
+          this.selectedNodeId = null;
+          this.selectedDoorId = null;
+          if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'wire', id: wire.id });
+          this.renderInfo();
         });
       }
       this.svg.appendChild(hit);
@@ -612,10 +608,13 @@ export class WallFaceDialog {
       });
       hit.addEventListener('mousedown', e => {
         e.stopPropagation();
-        if (this.mode === 'edit' && this.tool === 'remove') {
-          removeLink(this.data, link.id);
-          this.changed();
-        }
+        // 连通线本身不可点选/删除：点击选中本视图内可见的端点，删除走右侧信息面板
+        if (this.mode !== 'edit') return;
+        this.selectedNodeId = self.id;
+        this.selectedWireId = null;
+        this.selectedDoorId = null;
+        if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: self.id });
+        this.renderInfo();
       });
       this.svg.appendChild(hit);
       this.svg.appendChild(path);
@@ -714,11 +713,6 @@ export class WallFaceDialog {
       this.selectedDoorId = null;
       if (this.cbs.onSelect) this.cbs.onSelect({ kind: 'node', id: nodeId });
       this.render();
-      return;
-    }
-    if (this.tool === 'remove') {
-      if (node.type === 'terminal') return;
-      this.deleteNode(nodeId);
       return;
     }
     if (this.tool === 'wire') {
@@ -915,7 +909,6 @@ export class WallFaceDialog {
       socket: '点击当前墙面放置插座。',
       switch: '点击当前墙面放置开关。',
       light: '点击当前墙面放置灯具。',
-      remove: '点击节点/电线/连通线进行删除（仅限当前墙面）。',
       link: this.linkPending ? '点击下方列表中的候选节点完成连通。' : '点击一个端点，选择要连通的另一端点（0.4m 内就近连通，含跨墙两面）；跨墙走远线请用「➰ 连线」。',
     };
     const p = document.createElement('p');
@@ -989,6 +982,41 @@ export class WallFaceDialog {
       meta.style.cssText = 'font-size:12px;color:#888;';
       meta.textContent = `连接电线：${wires.length} 段`;
       this.infoEl.appendChild(meta);
+
+      // 穿墙连通列表：逐条展示并可删除（连通线的唯一删除入口）
+      const links = (this.data.links || []).filter(l => l.a === node.id || l.b === node.id);
+      if (links.length) {
+        const lh = document.createElement('h4');
+        lh.style.margin = '8px 0 4px';
+        lh.textContent = `穿墙连通：${links.length} 处`;
+        this.infoEl.appendChild(lh);
+        for (const l of links) {
+          const other = this.data.nodes.find(n => n.id === (l.a === node.id ? l.b : l.a));
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;';
+          const span = document.createElement('span');
+          span.style.cssText = 'flex:1;font-size:12px;color:#666;';
+          span.textContent = other ? linkDesc(this.data, other) : '（对端已不存在）';
+          row.appendChild(span);
+          if (!readOnly) {
+            const btn = document.createElement('button');
+            btn.className = 'tool-btn danger';
+            btn.textContent = '删除';
+            btn.addEventListener('click', () => { removeLink(this.data, l.id); this.changed(); });
+            row.appendChild(btn);
+          }
+          this.infoEl.appendChild(row);
+        }
+      }
+
+      if (this.mode === 'edit' && !readOnly) {
+        const del = document.createElement('button');
+        del.className = 'tool-btn danger';
+        del.style.cssText = 'display:block;width:100%;margin-top:10px;';
+        del.textContent = '删除节点';
+        del.addEventListener('click', () => this.deleteNode(node.id));
+        this.infoEl.appendChild(del);
+      }
     } else if (this.selectedWireId) {
       const wire = this.data.wires.find(w => w.id === this.selectedWireId);
       if (wire) {
@@ -1004,6 +1032,14 @@ export class WallFaceDialog {
         input.style.cssText = 'width:100%;padding:3px 6px;border:1px solid #bbb;border-radius:4px;';
         input.addEventListener('change', () => { wire.label = input.value; this.changed(); });
         this.infoEl.appendChild(lab); this.infoEl.appendChild(input);
+        if (this.mode === 'edit') {
+          const del = document.createElement('button');
+          del.className = 'tool-btn danger';
+          del.style.cssText = 'display:block;width:100%;margin-top:10px;';
+          del.textContent = '删除电线';
+          del.addEventListener('click', () => this.deleteWire(wire.id));
+          this.infoEl.appendChild(del);
+        }
       }
     } else if (this.mode === 'view') {
       const p2 = document.createElement('p');

@@ -69,8 +69,6 @@ function refreshPanel() {
 }
 
 function refreshToolbar() {
-  const isDeletable = app.selection && ['node', 'wire', 'door'].includes(app.selection.kind);
-  document.getElementById('btn-delete-entity').disabled = !(app.mode === 'edit' && isDeletable);
   document.getElementById('edit-hint').textContent =
     app.mode === 'edit' ? '点击墙面展开 2D 视图编辑电路；选中强电箱后可沿墙拖动' : '';
 }
@@ -132,7 +130,6 @@ document.getElementById('plan-tool-ortho').addEventListener('click', () => plan2
 document.getElementById('plan-tool-free').addEventListener('click', () => plan2d.setTool('free'));
 document.getElementById('plan-tool-door').addEventListener('click', () => plan2d.setTool('door'));
 document.getElementById('plan-fit').addEventListener('click', () => plan2d.fitView());
-document.getElementById('btn-delete-entity').addEventListener('click', deleteSelectedEntity);
 document.getElementById('chk-room-label-floor').addEventListener('change', e => {
   scene3d.setRoomLabelMode(e.target.checked);
 });
@@ -210,18 +207,6 @@ function deleteNodeById(id) {
   app.data.links = (app.data.links || []).filter(l => l.a !== id && l.b !== id);
   if (app.selection && app.selection.kind === 'node' && app.selection.id === id) app.selection = null;
   refresh();
-}
-
-function deleteSelectedEntity() {
-  const sel = app.selection;
-  if (!sel) return;
-  if (sel.kind === 'node') deleteNodeById(sel.id);
-  else if (sel.kind === 'door') deleteDoorById(sel.id);
-  else if (sel.kind === 'wire') {
-    app.data.wires = app.data.wires.filter(w => w.id !== sel.id);
-    app.selection = null;
-    refresh();
-  }
 }
 
 // 删除墙：级联清理墙上的节点、门、相关电线与连通；强电箱所在墙禁止删除
