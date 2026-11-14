@@ -444,7 +444,7 @@ export class WallFaceDialog {
     const centerLocal = this.localOf(box, v);
     const dotOff = BREAKER_BOX_SIZE.w / 2 - BREAKER_SIDE_INSET;
     // 每个断路器一行（对齐端子真实高度）+ 左右边缘各一个端子圆点：
-    // 活动侧实心（电线出发点），另一侧空心，点击可切换出线方向
+    // 左右是两个可同时接线的真实端子节点，均为所属线路颜色的实心圆点
     box.breakers.forEach((br, i) => {
       const cIdx = this.circuits.circuits.findIndex(c => c.breakerId === br.id);
       const color = cIdx >= 0 ? this.circuits.circuits[cIdx].color : '#999';
@@ -458,22 +458,16 @@ export class WallFaceDialog {
       lt.textContent = (br.label || `断路器${i + 1}`).slice(0, 8);
       g.appendChild(lt);
       for (const [side, off] of [['left', -dotOff], ['right', dotOff]]) {
-        const active = (br.side || 'left') === side;
+        const tid = br.terminals && br.terminals[side];
+        if (!tid) continue;
         const dot = el('circle', {
           cx: this.posX(v, centerLocal + off), cy, r: 4,
-          fill: active ? color : '#2c313a',
-          stroke: color, 'stroke-width': active ? 1.5 : 1,
-          class: 'node', 'data-nodeid': br.terminal, 'data-side': side,
+          fill: color, stroke: color, 'stroke-width': 1.5,
+          class: 'node', 'data-nodeid': tid,
         });
         dot.addEventListener('mousedown', (e) => {
           e.stopPropagation();
-          if (active) {
-            this.onNodeMouseDown(e, br.terminal);
-          } else {
-            br.side = side;
-            if (this.cbs.onChange) this.cbs.onChange();
-            this.render();
-          }
+          this.onNodeMouseDown(e, tid);
         });
         g.appendChild(dot);
       }

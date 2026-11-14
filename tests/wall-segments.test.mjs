@@ -146,8 +146,9 @@ test('段电路判断：只统计落在段范围内的节点', () => {
   const walls = [...square(), { id: 'w5', start: [4, 0], end: [4, 6], height: 2.8, thickness: 0.2 }];
   const data = {
     nodes: [
-      { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w1', face: 0, pos: 0.25, height: 1.6, breakers: [{ id: 'br1', label: 'B1', terminal: 't1' }] },
+      { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w1', face: 0, pos: 0.25, height: 1.6, breakers: [{ id: 'br1', label: 'B1', terminals: { left: 't1', right: 't1r' } }] },
       { id: 't1', type: 'terminal', wall: 'w1', face: 0, pos: 0.25, height: 1.6 },
+      { id: 't1r', type: 'terminal', wall: 'w1', face: 0, pos: 0.27, height: 1.6 },
       { id: 'n1', type: 'device', deviceType: 'socket', wall: 'w1', face: 0, pos: 0.75, height: 0.3 },
     ],
     wires: [{ id: 'e1', from: 't1', to: 'n1' }],
@@ -163,7 +164,7 @@ test('段电路判断：只统计落在段范围内的节点', () => {
   assert.equal(segHasCircuit(data, circuits, far), false);
 });
 
-test('v1（米制 pos）→ v2 迁移：除以墙长、clamp、4 位小数', () => {
+test('v1（米制 pos）→ v3 迁移：除以墙长、clamp、4 位小数', () => {
   const data = {
     version: 1,
     walls: [
@@ -179,7 +180,7 @@ test('v1（米制 pos）→ v2 迁移：除以墙长、clamp、4 位小数', () 
     links: [],
   };
   normalizeData(data);
-  assert.equal(data.version, 2);
+  assert.equal(data.version, 3);
   assert.equal(data.nodes.find(n => n.id === 'n1').pos, 0.25);
   assert.equal(data.nodes.find(n => n.id === 'n2').pos, 0.75);
   assert.equal(data.nodes.find(n => n.id === 'n3').pos, 0.5);
@@ -189,9 +190,9 @@ test('v1（米制 pos）→ v2 迁移：除以墙长、clamp、4 位小数', () 
   assert.equal(validateData(data), null);
 });
 
-test('validateData：v2 要求 pos∈[0,1]，门仍是米数', () => {
+test('validateData：v3 要求 pos∈[0,1]，门仍是米数', () => {
   const base = {
-    version: 2,
+    version: 3,
     walls: [{ id: 'a', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.2 }],
     nodes: [],
     wires: [],

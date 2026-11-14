@@ -6,7 +6,7 @@ import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, parseJsonText, exportJsonText } from './persistence.js';
 import { JsonDialog } from './json-dialog.js';
-import { DEVICE_TYPES, createBreakerBox, createNode, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta } from './model.js';
+import { DEVICE_TYPES, createBreakerBox, createBreakerTerminals, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -175,10 +175,8 @@ panel.on('doorFlip', id => { plan2d.flipDoor(id); refreshPanel(); });
 panel.on('addBreaker', () => {
   const box = findBreakerBox(app.data);
   if (!box) return;
-  const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
-  node.label = '强电箱端子';
-  app.data.nodes.push(node);
-  box.breakers.push({ id: genId('b'), label: `断路器 ${box.breakers.length + 1}`, terminal: node.id });
+  const terminals = createBreakerTerminals(app.data, box);
+  box.breakers.push({ id: genId('b'), label: `断路器 ${box.breakers.length + 1}`, terminals });
   refresh();
 });
 panel.on('deleteWire', id => {
@@ -240,7 +238,8 @@ function deleteDoorById(id) {
 }
 
 // ---------- 强电箱端子同步 ----------
-// 端子高度按断路器数量在箱体垂直范围内均分：每条线路占 1 权重，两端各预留 0.5 权重，避免出线重叠
+// 端子高度按断路器数量在箱体垂直范围内均分：每条线路占 1 权重，两端各预留 0.5 权重，避免出线重叠；
+// 每个断路器的左右端子同行同高，横向位置固定在箱体左/右边缘（内缩 1cm）
 function syncTerminals() {
   const box = findBreakerBox(app.data);
   if (!box) return;
@@ -248,14 +247,16 @@ function syncTerminals() {
   const wall = app.data.walls.find(w => w.id === box.wall);
   const L = wall ? wallLen(wall) : 0;
   box.breakers.forEach((br, i) => {
-    const node = app.data.nodes.find(x => x.id === br.terminal);
-    if (!node) return;
-    node.wall = box.wall;
-    node.face = box.face;
-    // 端子横向位置跟随线路出线方向（箱体左/右边缘）
-    const delta = breakerTerminalPosDelta(br.side);
-    node.pos = L > 0 ? Math.min(1, Math.max(0, box.pos + delta / L)) : box.pos;
-    node.height = breakerTerminalHeight(i, n, box.height);
+    const height = breakerTerminalHeight(i, n, box.height);
+    for (const [side, tid] of [['left', br.terminals && br.terminals.left], ['right', br.terminals && br.terminals.right]]) {
+      const node = app.data.nodes.find(x => x.id === tid);
+      if (!node) continue;
+      node.wall = box.wall;
+      node.face = box.face;
+      const delta = breakerTerminalPosDelta(side);
+      node.pos = L > 0 ? Math.min(1, Math.max(0, box.pos + delta / L)) : box.pos;
+      node.height = height;
+    }
   });
 }
 

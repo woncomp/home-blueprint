@@ -28,8 +28,8 @@ export function breakerTerminalHeight(i, n, boxCenterHeight) {
   return boxCenterHeight - BREAKER_BOX_SIZE.h / 2 + (i + 1) * unit;
 }
 
-// 端子出线方向：相对箱体中心沿墙偏移到左/右边缘（内缩 1cm），电线从该侧伸出；
-// side 缺省视为 'left'。返回米制偏移（右正左负）。
+// 双端子固定横向位置：相对箱体中心沿墙偏移到左/右边缘（内缩 1cm），
+// 左右端子各是一个真实节点，可同时接线。返回米制偏移（右正左负）。
 export const BREAKER_SIDE_INSET = 0.01;
 export function breakerTerminalPosDelta(side) {
   const sign = side === 'right' ? 1 : -1;
@@ -43,7 +43,7 @@ export function genId(prefix) {
 
 export function createEmptyData() {
   return {
-    version: 2,
+    version: 3,
     walls: [],
     nodes: [],
     wires: [],
@@ -111,8 +111,21 @@ export function createBreakerBox(wallId, face, pos) {
     pos,
     height: 1.6,
     label: '强电箱',
-    breakers: [], // { id, label, terminal: 节点id（箱内端子） }
+    breakers: [], // { id, label, terminals: { left: 节点id, right: 节点id }（箱内左右端子） }
   };
+}
+
+// 为断路器创建左、右两个真实端子节点（type: 'terminal'），返回 { left, right } 节点 id。
+// 新增断路器与旧数据迁移共用，保证 ID、标签和节点结构只有一份逻辑；
+// 初始坐标取箱体值，实际位置由 syncTerminals() 统一计算
+export function createBreakerTerminals(data, box) {
+  const mk = () => {
+    const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
+    node.label = '强电箱端子';
+    data.nodes.push(node);
+    return node.id;
+  };
+  return { left: mk(), right: mk() };
 }
 
 export function findBreakerBox(data) {
@@ -166,7 +179,40 @@ export function normalizeData(data) {
     }
     data.version = 2;
   }
+  // v2→v3（须在节点坐标归一化之后）：断路器从单一活动端子升级为左右双端子。
+  // 旧 terminal 按 side 保留在对应一侧（缺省左侧），另一侧新建端子；缺 terminal 则两侧都新建。
+  // 不改动 wires：原有电线引用全部保留，新区别仅在于多出一个可用端子
+  if (data && typeof data.version === 'number' && data.version < 3) {
+    migrateBreakerTerminals(data);
+    data.version = 3;
+  }
   return data;
+}
+
+function migrateBreakerTerminals(data) {
+  const box = findBreakerBox(data);
+  if (!box || !Array.isArray(box.breakers)) return;
+  for (const br of box.breakers) {
+    if (!br || typeof br !== 'object') continue;
+    const oldId = typeof br.terminal === 'string' && br.terminal ? br.terminal : null;
+    const keep = oldId ? data.nodes.find(n => n.id === oldId) : null;
+    const keepLeft = keep && br.side !== 'right'; // side 缺省按旧默认行为归左侧
+    const fresh = () => {
+      const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
+      node.label = '强电箱端子';
+      data.nodes.push(node);
+      return node.id;
+    };
+    if (keep) {
+      br.terminals = keepLeft
+        ? { left: keep.id, right: fresh() }
+        : { left: fresh(), right: keep.id };
+    } else {
+      br.terminals = { left: fresh(), right: fresh() };
+    }
+    delete br.terminal;
+    delete br.side;
+  }
 }
 
 export function addLink(data, a, b) {
@@ -894,7 +940,8 @@ export function roomBBox(room) {
 // ---------- 线路计算 ----------
 
 // 返回 { circuits: [{ breakerId, label, color, wireIds:Set, nodeIds:Set, wallIds:Set }], wireCircuit: Map<wireId, idx>, nodeCircuit: Map<nodeId, idx>, wallsWithCircuit: Set<wallId> }
-// 线路 = 从断路器终端节点出发，沿电线 + links（穿墙/转角连通）遍历到的连通分量
+// 线路 = 从断路器左/右端子节点出发，沿电线 + links（穿墙/转角连通）遍历到的连通分量；
+// 两个端子各自对应一个连通分量，同属一个断路器，颜色与统计一致
 export function computeCircuits(data) {
   const parent = new Map();
   const nodesById = new Map(data.nodes.map(n => [n.id, n]));
@@ -928,11 +975,18 @@ export function computeCircuits(data) {
     box.breakers.forEach((br, i) => {
       const color = CIRCUIT_COLORS[i % CIRCUIT_COLORS.length];
       const circuit = { breakerId: br.id, label: br.label, color, wireIds: new Set(), nodeIds: new Set(), wallIds: new Set() };
-      const terminal = br.terminal ? 'n:' + br.terminal : null;
-      if (terminal && parent.has(terminal)) {
-        const root = find(terminal);
+      // 左右端子是同一断路器的两个入口：分别取连通根，把两个连通分量归入同一线路。
+      // 不要对左右端子额外 union()——数据中没有箱内电线，连通拓扑保持原样
+      const roots = new Set();
+      for (const tid of [br.terminals && br.terminals.left, br.terminals && br.terminals.right]) {
+        if (tid && parent.has('n:' + tid)) roots.add(find('n:' + tid));
+      }
+      if (roots.size) {
         for (const w of data.wires) {
-          if (parent.has('n:' + w.from) && find('n:' + w.from) === root) {
+          const inCircuit =
+            (parent.has('n:' + w.from) && roots.has(find('n:' + w.from))) ||
+            (parent.has('n:' + w.to) && roots.has(find('n:' + w.to)));
+          if (inCircuit) {
             circuit.wireIds.add(w.id);
             circuit.nodeIds.add(w.from);
             circuit.nodeIds.add(w.to);
@@ -982,7 +1036,7 @@ function isPoint(p) {
 // 电线与 links 对节点的引用、断路器端子引用，以及跨集合的核心实体 ID 唯一性
 export function validateData(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return '数据不是对象';
-  if (data.version !== 2) return `不支持的版本: ${data.version}`;
+  if (data.version !== 3) return `不支持的版本: ${data.version}`;
   if (!Array.isArray(data.walls) || !Array.isArray(data.nodes) || !Array.isArray(data.wires)) {
     return 'walls/nodes/wires 必须是数组';
   }
@@ -1046,13 +1100,25 @@ export function validateData(data) {
       }
     }
   }
-  // 断路器端子须指向真实节点；terminal 缺失视为未接线，允许通过
+  // 断路器必须有完整的左右双端子，且都指向真实 terminal 节点：
+  // 引用存在、左右不同、端子归属唯一（不被多个断路器或两侧重复引用）
+  const terminalOwner = new Map(); // terminal 节点 id -> 断路器 id
   for (const box of boxes) {
     if (!Array.isArray(box.breakers)) return `强电箱 ${box.id} 的 breakers 必须是数组`;
     for (const br of box.breakers) {
       if (!br || typeof br !== 'object') return `强电箱 ${box.id} 的断路器条目无效`;
-      if (br.terminal != null && (typeof br.terminal !== 'string' || !nodeIds.has(br.terminal))) {
-        return `断路器 ${br.id || ''} 引用了不存在的端子`;
+      const sides = br.terminals;
+      if (!sides || typeof sides !== 'object') return `断路器 ${br.id || ''} 缺少左右端子`;
+      for (const side of ['left', 'right']) {
+        const tid = sides[side];
+        const who = br.id || '';
+        if (typeof tid !== 'string' || !tid) return `断路器 ${who} 缺少${side === 'left' ? '左' : '右'}侧端子`;
+        const node = data.nodes.find(n => n.id === tid);
+        if (!node) return `断路器 ${who} 引用了不存在的端子`;
+        if (node.type !== 'terminal') return `断路器 ${who} 的端子 ${tid} 不是端子节点`;
+        if (sides.left === sides.right) return `断路器 ${who} 左右端子引用了同一节点`;
+        if (terminalOwner.has(tid)) return `端子 ${tid} 被多个断路器引用`;
+        terminalOwner.set(tid, who);
       }
     }
   }
