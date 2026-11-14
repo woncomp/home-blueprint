@@ -300,7 +300,7 @@
     },
     {
       "id": "p2",
-      "type": "split",
+      "type": "turn",
       "wall": "w1",
       "face": 1,
       "pos": 0.075,
@@ -405,7 +405,7 @@
     },
     {
       "id": "nmvnu8hwv_a",
-      "type": "split",
+      "type": "turn",
       "wall": "wmvnptgj9_1",
       "face": 0,
       "pos": 0.4898,

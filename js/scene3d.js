@@ -454,7 +454,7 @@ export class Scene3D {
           this.labelGroup.add(plate);
         }
       } else {
-        // 转弯/分线端点：小圆点
+        // 转弯端点：小圆点
         const color = cIdx != null ? new THREE.Color(this.circuits.circuits[cIdx].color) : new THREE.Color(0x999999);
         const geo = new THREE.SphereGeometry(0.045, 10, 10);
         const mat = new THREE.MeshBasicMaterial({ color: isSel ? 0xffee55 : color, transparent: true, opacity });

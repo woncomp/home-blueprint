@@ -655,17 +655,12 @@ export class WallFaceDialog {
           }
         }
         shape = g;
-      } else if (node.type === 'turn') {
+      } else { // 转弯端点
         shape = el('rect', {
           x: x - 6, y: y - 6, width: 12, height: 12,
           fill: '#fff', stroke: isSel ? '#ffee55' : cColor, 'stroke-width': isSel ? 3 : 2,
           class: 'node', 'data-nodeid': node.id,
         });
-      } else { // split
-        const g = el('g', { class: 'node', 'data-nodeid': node.id });
-        g.appendChild(el('circle', { cx: x, cy: y, r: 7, fill: '#fff', stroke: isSel ? '#ffee55' : cColor, 'stroke-width': isSel ? 3 : 2 }));
-        g.appendChild(el('path', { d: `M ${x - 3.5} ${y} H ${x + 3.5} M ${x} ${y - 3.5} V ${y + 3.5}`, stroke: cColor, 'stroke-width': 1.6, fill: 'none' }));
-        shape = g;
       }
       shape.addEventListener('mousedown', e => this.onNodeMouseDown(e, node.id));
       this.svg.appendChild(shape);
@@ -768,7 +763,7 @@ export class WallFaceDialog {
   onSvgMouseDown(e) {
     if (this.mode !== 'edit') return;
     const pt = this.svgPoint(e);
-    if (this.tool === 'turn' || this.tool === 'split' ||
+    if (this.tool === 'turn' ||
         this.tool === 'socket' || this.tool === 'switch' || this.tool === 'light') {
       // 只能在当前墙面板内放置设备
       const av = this.activeView();
@@ -819,7 +814,7 @@ export class WallFaceDialog {
 
   onSvgHover(e) {
     if (this.mode !== 'edit') return;
-    if (['turn', 'split', 'socket', 'switch', 'light'].includes(this.tool)) {
+    if (['turn', 'socket', 'switch', 'light'].includes(this.tool)) {
       this.showPreview(this.svgPoint(e), e.altKey);
     }
   }
@@ -900,7 +895,6 @@ export class WallFaceDialog {
       select: '拖动节点可调整其沿墙位置与高度；靠近横向参考线时高度自动吸附（按住 Alt 禁用吸附）。相邻墙为只读。',
       wire: this.wirePending ? '已选第一个端点，点击第二个端点完成连线。' : '依次点击两个端点/设备连接电线：支持当前墙内，以及当前墙与左右相邻墙之间的跨墙电线。',
       turn: '点击当前墙面放置转弯端点。',
-      split: '点击当前墙面放置分线端点。',
       socket: '点击当前墙面放置插座。',
       switch: '点击当前墙面放置开关。',
       light: '点击当前墙面放置灯具。',

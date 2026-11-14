@@ -15,7 +15,6 @@ export const DEVICE_TYPES = {
 
 export const NODE_TYPE_NAMES = {
   turn: '转弯端点',
-  split: '分线端点',
   device: '设备',
 };
 
@@ -1023,7 +1022,7 @@ export function wiresAt(data, nodeId) {
   return data.wires.filter(w => w.from === nodeId || w.to === nodeId);
 }
 
-const NODE_TYPES = ['turn', 'split', 'device', 'terminal'];
+const NODE_TYPES = ['turn', 'device', 'terminal'];
 
 function isPoint(p) {
   return Array.isArray(p) && p.length === 2
