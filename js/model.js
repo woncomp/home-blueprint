@@ -448,6 +448,10 @@ function atomicEdgeAtRangeEnd(edges, tEnd, rT0, rT1) {
 // 屏幕右侧，面环半边（detectRooms 遍历方向）保持面在左侧，恰为显示方向的反向 ——
 // 因此显示左邻 = 面环 next（显示左端原子边），显示右邻 = 面环 prev（显示右端原子边）；
 // 邻墙的 A/B 面由目标半边与墙方向是否同向直接确定（同向=A，反向=B）。
+  // 死端短墙自由端是例外：面环在该处回弹到当前墙另一面（自由端两侧面在同一房间环
+  // 上回弹），返回 { wallId: 当前墙, face: 相反面 } 作为背面相邻；须当前边两面都属于
+  // 房间（共线开口链两面同属外平面，回弹仍视为无邻墙）且当前墙与其他墙有真实连接
+  // （完全孤立墙不享受此规则）。
 // 返回 { left, right }，每项为 { wallId, face, seg } 或 null；seg 为合并后的面范围段快照。
 // walls：墙数组；wallSegments：buildWallSegments 的结果；seg 为当前面范围段快照
 // （可带 index/t0/t1；null 视为整墙，两端各自按所在面导航）；
@@ -498,8 +502,10 @@ export function adjacentWallViews(walls, wallSegments, wallId, face, seg, faceNa
   };
 
   // 单侧求解：useNext=true 求左邻（面环 next），false 求右邻（面环 prev）。
-  // 环上回弹到当前墙（悬空端/孤立墙）是正常的"无邻墙"，静默返回 null；
-  // 其余查找失败属数据异常，输出诊断后如实返回 null，不静默改选其他面
+  // 环上回弹分两种：目标为当前墙另一面（死端短墙自由端两侧面构成退化面环，
+  // 后继/前驱即当前墙背面）是合法背面相邻，当前墙须仍与其他墙存在真实几何连接
+  // （区分完全孤立墙）；目标为当前墙同面（共线开口链沿同一面回弹）/孤立墙/
+  // 数据异常时如实返回 null，不静默改选其他面
   const findSide = (tEnd, useNext) => {
     const endEdge = atomicEdgeAtRangeEnd(nav.edgesByWall.get(wallId), tEnd, t0, t1);
     const side = useNext ? 'left' : 'right';
@@ -511,20 +517,40 @@ export function adjacentWallViews(walls, wallSegments, wallId, face, seg, faceNa
     }
     // 显示半边的可见面在屏幕右侧 → 面环半边为其反向（A 面 a→b，B 面 b→a）
     const h = face === 0 ? endEdge.a + '>' + endEdge.b : endEdge.b + '>' + endEdge.a;
+    const hTarget = useNext ? nav.next.get(h) : nav.prev.get(h);
+    const e = hTarget && nav.edgeOf.get(hTarget);
+    if (e && e.wallId === wallId) {
+      // 死端短墙：自由端两侧面在同一房间环上回弹，目标是当前墙背面。
+      // 还须当前边两面都属于房间（区分共线开口链——其两面同属外平面，回弹不视为邻墙）
+      // 且当前墙与其他墙存在真实几何连接（区分完全孤立墙）
+      const backFace = hTarget === e.a + '>' + e.b ? 0 : 1;
+      const curSeg = segOfNode(segmentsForWall(wallSegments, wallId), e.t0);
+      if (backFace !== face && curSeg && curSeg.left != null && curSeg.right != null &&
+          nav.faceIdx.get(hTarget) === nav.faceIdx.get(h) &&
+          walls.some(w => w.id !== wallId && wallsConnected(wall, w))) {
+        const range = buildFaceRanges(segmentsForWall(wallSegments, wallId), backFace)
+          .find(r => r.t0 - 1e-9 <= e.t0 && e.t1 <= r.t1 + 1e-9);
+        if (range) {
+          return {
+            wallId,
+            face: backFace,
+            seg: { id: range.id, wallId: range.wallId, index: range.index, t0: range.t0, t1: range.t1 },
+          };
+        }
+      }
+      return null;
+    }
     const fi = nav.faceIdx.get(h);
     if (!faceNavigable(nav, fi)) {
       console.warn('[adjacentWallViews] 可见面不可导航（微面/退化），几何回退',
         { current, side, tEnd, fallbackUsed: true });
       return findNeighborByGeometry(tEnd, !useNext);
     }
-    const hTarget = useNext ? nav.next.get(h) : nav.prev.get(h);
-    const e = hTarget && nav.edgeOf.get(hTarget);
     if (!e) {
       console.warn('[adjacentWallViews] 面环导航数据缺失，返回 null',
         { current, side, tEnd, faceIdx: fi, fallbackUsed: false });
       return null;
     }
-    if (e.wallId === wallId) return null;
     const targetFace = hTarget === e.a + '>' + e.b ? 0 : 1;
     if (nav.faceIdx.get(hTarget) !== fi) {
       console.warn('[adjacentWallViews] 目标半边脱离当前面环，返回 null',
@@ -750,9 +776,31 @@ function segIntersect(w1, w2) {
 // 持久化层永远保存原始整墙；墙被 T/X 交叉分到两个房间时，
 // 电路编辑与 3D 预览把墙视为多面独立的"逻辑墙段"，纯派生、随几何实时重算
 
-// 把 detectRooms 的 segRooms（每墙按切点切出的子段 + 两侧房间）合并成逻辑墙段：
-// 相邻且 (left,right) 完全相同的子段合并——段边界恰好是房间归属发生变化的切点；
-// 未被拆分的墙恒为单段 [0,1]。返回 Map<wallId, [{id, wallId, index, t0, t1, left, right}]>
+// 接点是否为死端短墙接点：接点处有 stem 墙（除宿主外的其他墙）经过，且该 stem 墙
+// 在 segRooms 的所有子段左右房间相同且非空——即它不分割房间、是悬空死端墙。
+// 宿主墙自身的房间归属是否变化不参与判定（短墙脚点可能与共线房间分界端点重合，
+// 此时宿主另一侧房间恰好突变，但接点仍是死端短墙接点）
+function deadEndJunctionAt(segRooms, walls, host, t) {
+  const [dx, dz] = wallDir(host);
+  const px = host.start[0] + dx * t * wallLen(host);
+  const pz = host.start[1] + dz * t * wallLen(host);
+  for (const cand of walls) {
+    if (cand.id === host.id) continue;
+    const tol = (host.thickness || 0.2) / 2 + (cand.thickness || 0.2) / 2 + WALL_JOIN_EPS;
+    if (wallParamNear(cand, px, pz, tol) == null) continue;
+    const subs = segRooms.get(cand.id);
+    if (!subs || !subs.length) continue;
+    if (subs.every(s => s.left != null && s.left === s.right)) return true;
+  }
+  return false;
+}
+
+// 把 detectRooms 的 segRooms（每墙按切点切出的子段 + 两侧房间）整理成逻辑墙段：
+// 原子切分边界即真实接点（端部交接/T 型/X 型/死端短墙），一律保留，不再按房间
+// 归属是否变化合并——房间信息只影响面范围合并（buildFaceRanges），不影响墙段。
+// 段上另带 deadEndStart 标注：该段 t0 处的接点是死端短墙接点（见 deadEndJunctionAt），
+// 供 buildFaceRanges 强制分组。未被拆分的墙恒为单段 [0,1]。
+// 返回 Map<wallId, [{id, wallId, index, t0, t1, left, right, deadEndStart}]>
 // walls 用于换算子段米制长度：手绘 T 连接常见出头/欠头，短于墙厚的小尖段属制图误差，
 // 吸收回邻居——T 型只拆宿主墙，stem 墙保持整段；真实出头（≥墙厚）仍照常拆分。
 export function buildWallSegments(segRooms, walls) {
@@ -762,15 +810,9 @@ export function buildWallSegments(segRooms, walls) {
     const wall = wallById.get(wallId);
     const minSeg = wall ? Math.max(wall.thickness || 0.2, 0.05) : Infinity;
     const len = wall ? wallLen(wall) : 1;
-    const merged = [];
-    for (const s of subs) {
-      const last = merged[merged.length - 1];
-      if (last && last.left === s.left && last.right === s.right && Math.abs(last.t1 - s.t0) < 1e-9) {
-        last.t1 = s.t1;
-      } else {
-        merged.push({ t0: s.t0, t1: s.t1, left: s.left, right: s.right });
-      }
-    }
+    const merged = [...subs]
+      .sort((a, b) => a.t0 - b.t0)
+      .map(s => ({ t0: s.t0, t1: s.t1, left: s.left, right: s.right }));
     // 吸收微小子段：端部并入唯一邻居，中间并入较长的邻居；只剩一段时不处理。
     // minSeg 为 Infinity（缺 walls）时整体跳过吸收
     let changed = true;
@@ -797,6 +839,9 @@ export function buildWallSegments(segRooms, walls) {
       t1: m.t1,
       left: m.left,
       right: m.right,
+      // 内部边界（非首段 t0）处有死端短墙 stem 接入 → 面范围在该处强制分组
+      deadEndStart: i > 0 && wall && walls ?
+        deadEndJunctionAt(segRooms, walls, wall, m.t0) : false,
     })));
   }
   return out;
@@ -824,11 +869,14 @@ export function segOfNode(segs, pos) {
   return segs[segs.length - 1];
 }
 
-// 面范围段：把相邻的"命中面同侧房间相同"的逻辑墙段合并成一个范围。
-// T/X 型拆分只作用于被接触的一面：stem 只改变接触侧的房间归属，
-// 未被接触的一面沿墙房间不变 → 合并为整面范围（可整面悬停/展开）；
-// X 型交叉两面房间都在交点变化 → 两面都拆。边界取 stem 中心线（与
-// 逻辑段一致），落在接头覆盖条内的节点仍归属某一侧，不会失联。
+// 面范围段：把相邻的逻辑墙段按"显示面同侧房间相同"合并成一个范围，但以下两类
+// 真实接点除外——它们都在接点强制分组，A/B 两面都保留边界，可各自独立展开：
+// - deadEndStart：接点处有死端短墙 stem 接入（stem 墙自身不分割房间；宿主墙该处
+//   另一侧房间可能恰好突变，如短墙脚点与共线房间分界端点重合，不能只看宿主房间）；
+// - bothSidesUnchanged：接点两侧 (left,right) 完全相同（兜底，同语义的老判定）。
+// 其余接点（普通贯通 T/X 至少一侧房间变化）：未变化的显示面仍可跨接点合并
+// （如 stem 未接触的一面整面展开）。边界取 stem 中心线（与逻辑段一致），落在接头
+// 覆盖条内的节点仍归属某一侧，不会失联。
 // face：0=A 面（left 侧）/1=B 面（right 侧）。返回：
 // [{ id, wallId, face, index, t0, t1, faceKey }]，faceKey 为该面侧房间 key（外侧面为 null）
 export function buildFaceRanges(segs, face) {
@@ -836,7 +884,12 @@ export function buildFaceRanges(segs, face) {
   const groups = [];
   for (const s of segs || []) {
     const last = groups[groups.length - 1];
-    if (last && last.segs[0][side] === s[side]) last.segs.push(s);
+    // 死端短墙接点（deadEndStart）或接点两侧 (left,right) 完全相同 → 强制分组；
+    // 否则显示面房间相同即可合并（贯通 T/X 未变化侧跨接点整面）
+    const bothSidesUnchanged = last &&
+      last.segs[last.segs.length - 1].left === s.left &&
+      last.segs[last.segs.length - 1].right === s.right;
+    if (last && !s.deadEndStart && !bothSidesUnchanged && last.segs[0][side] === s[side]) last.segs.push(s);
     else groups.push({ segs: [s] });
   }
   return groups.map((grp, g) => ({

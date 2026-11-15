@@ -75,14 +75,30 @@ test('T 型 stem 出头 0.5m（≥墙厚）：真实可见墙段，stem 保持�
   assert.ok(Math.abs(w5[1].t0 - 0.5 / 6.5) < 1e-9);
 });
 
-test('死端短墙：两侧房间不变，不拆分', () => {
+test('死端短墙：不增加房间，宿主墙在接点拆成两段，短墙保持整段', () => {
   const walls = [...square(), { id: 'stub', start: [2, 0], end: [2, 2], height: 2.8, thickness: 0.2 }];
   const { rooms } = detectRooms(walls);
   assert.equal(rooms.length, 1);
 
-  assert.equal(segsOf(walls, 'stub').length, 1);
-  // T 点两侧子段 (left,right) 相同 → 宿主墙也不拆
-  assert.equal(segsOf(walls, 'w1').length, 1);
+  // 短墙自身不因接点被切分
+  const stub = segsOf(walls, 'stub');
+  assert.equal(stub.length, 1);
+  assert.ok(Math.abs(stub[0].t0 - 0) < 1e-9 && Math.abs(stub[0].t1 - 1) < 1e-9);
+  // 宿主墙在 T 接点两侧各成一段：真实接点一律保留，与房间归属是否变化无关
+  const w1 = segsOf(walls, 'w1');
+  assert.equal(w1.length, 2);
+  assert.ok(Math.abs(w1[0].t0 - 0) < 1e-9 && Math.abs(w1[0].t1 - 0.25) < 1e-9);
+  assert.ok(Math.abs(w1[1].t0 - 0.25) < 1e-9 && Math.abs(w1[1].t1 - 1) < 1e-9);
+  assert.equal(w1[0].id, 'w1#0');
+  assert.equal(w1[1].id, 'w1#1');
+  // 两侧房间都没变化（死端短墙不改变房间归属）
+  assert.equal(w1[0].left, w1[1].left);
+  assert.equal(w1[0].right, w1[1].right);
+  // 切点上的节点归右侧段（半开区间规则不变）
+  assert.equal(segOfNode(w1, 0.2499).id, 'w1#0');
+  assert.equal(segOfNode(w1, 0.25).id, 'w1#1');
+  // 删除短墙后接点消失，宿主墙重新合并为整墙
+  assert.equal(segsOf(square(), 'w1').length, 1);
 });
 
 test('X 型交叉：两墙都在交点拆分', () => {
@@ -260,14 +276,65 @@ test('面范围段：X 型交叉两面都在交点拆分', () => {
   }
 });
 
-test('面范围段：死端短墙不改变房间归属，宿主两面都整墙', () => {
+test('面范围段：死端短墙两侧房间不变，宿主两面都在接点分组', () => {
   const walls = [...square(), { id: 'stub', start: [2, 0], end: [2, 2], height: 2.8, thickness: 0.2 }];
   const w1segs = segsOf(walls, 'w1');
-  assert.equal(w1segs.length, 1);
+  assert.equal(w1segs.length, 2);
+  // 接点两侧 (left,right) 完全相同 → A/B 两面都不跨接点合并，各自分成两个面范围
   for (const face of [0, 1]) {
-    const s = faceSegOf(w1segs, face, 0.4);
+    const left = faceSegOf(w1segs, face, 0.1);
+    const right = faceSegOf(w1segs, face, 0.9);
+    assert.ok(Math.abs(left.t0 - 0) < 1e-9 && Math.abs(left.t1 - 0.25) < 1e-9, `face ${face} 左范围`);
+    assert.ok(Math.abs(right.t0 - 0.25) < 1e-9 && Math.abs(right.t1 - 1) < 1e-9, `face ${face} 右范围`);
+    assert.equal(left.index, 0);
+    assert.equal(right.index, 1);
+  }
+  // 切点归右侧面范围（与 segOfNode 一致）
+  assert.equal(faceSegOf(w1segs, 0, 0.25).index, 1);
+  assert.equal(faceSegOf(w1segs, 1, 0.25).index, 1);
+  // 短墙两面都保持整面
+  const stubsegs = segsOf(walls, 'stub');
+  for (const face of [0, 1]) {
+    const s = faceSegOf(stubsegs, face, 0.5);
     assert.ok(Math.abs(s.t0 - 0) < 1e-9 && Math.abs(s.t1 - 1) < 1e-9);
   }
+});
+
+test('面范围段：短墙脚点与共线房间分界重合，宿主房间面仍按死端接点分组', () => {
+  // 方形外圈 + 北房间（nd 贯通分界）+ 短墙 stub 与北房间东墙 n3 共线穿过主墙 w1。
+  // w1 在接点 x=4 处 A 面（北）侧房间从北房间B 突变为 null，但 stem 墙 stub 自身
+  // 不分割房间（两面都是南房间）→ 接点按死端短墙分组；贯通分界 nd 的接点（x=2）
+  // stem 分割两个北房间 → 不标注，南侧面（B 面）仍跨接点合并。
+  const walls = [
+    ...square(),
+    { id: 'n1', start: [0, 0], end: [0, -3], height: 2.8, thickness: 0.2 },
+    { id: 'n2', start: [0, -3], end: [4, -3], height: 2.8, thickness: 0.2 },
+    { id: 'nd', start: [2, -3], end: [2, 0], height: 2.8, thickness: 0.2 },
+    { id: 'n3', start: [4, -3], end: [4, 0], height: 2.8, thickness: 0.2 },
+    { id: 'stub', start: [4, 0], end: [4, 1], height: 2.8, thickness: 0.2 },
+  ];
+  const { rooms } = detectRooms(walls);
+  assert.equal(rooms.length, 3); // 南房间 + 北房间A + 北房间B
+  // w1 三个逻辑段：切点在 x=2（贯通分界）与 x=4（死端短墙接点）
+  const w1segs = segsOf(walls, 'w1');
+  assert.equal(w1segs.length, 3);
+  assert.equal(segOfNode(w1segs, 0.25).id, 'w1#1');
+  assert.equal(segOfNode(w1segs, 0.5).id, 'w1#2');
+  // B 面（南房间侧）：跨贯通分界 x=2 合并，在死端短墙接点 x=4 分组
+  const bWest = faceSegOf(w1segs, 1, 0.3);
+  const bEast = faceSegOf(w1segs, 1, 0.9);
+  assert.ok(Math.abs(bWest.t0 - 0) < 1e-9 && Math.abs(bWest.t1 - 0.5) < 1e-9, '西范围应跨 x=2 合并到短墙接点');
+  assert.ok(Math.abs(bEast.t0 - 0.5) < 1e-9 && Math.abs(bEast.t1 - 1) < 1e-9, '东范围应从短墙接点开始');
+  // A 面（北）侧：房间在 x=2 与 x=4 都变化 → 三个范围
+  assert.equal(faceSegOf(w1segs, 0, 0.1).index, 0);
+  assert.equal(faceSegOf(w1segs, 0, 0.3).index, 1);
+  assert.equal(faceSegOf(w1segs, 0, 0.9).index, 2);
+  // 删除短墙后死端接点消失：B 面恢复跨 x=4 合并为整面（A 面仍因北房间B|外平面分开）
+  const noStub = walls.filter(w => w.id !== 'stub');
+  const w1segs2 = segsOf(noStub, 'w1');
+  const merged = faceSegOf(w1segs2, 1, 0.9);
+  assert.ok(Math.abs(merged.t0 - 0) < 1e-9 && Math.abs(merged.t1 - 1) < 1e-9);
+  assert.equal(faceSegOf(w1segs2, 0, 0.9).index, 2);
 });
 
 test('面范围段：同侧房间相同的相邻段合并，异侧保留；空段返回 null', () => {
