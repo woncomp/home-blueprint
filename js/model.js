@@ -35,9 +35,40 @@ export function breakerTerminalPosDelta(side) {
   return sign * (BREAKER_BOX_SIZE.w / 2 - BREAKER_SIDE_INSET);
 }
 
-let idCounter = 1;
-export function genId(prefix) {
-  return `${prefix}${Date.now().toString(36)}_${(idCounter++).toString(36)}`;
+// 收集数据中所有已占用的 id（墙/节点/电线/连通/门 + 断路器，共用全局命名空间）
+function collectUsedIds(data) {
+  const used = new Set();
+  if (!data || typeof data !== 'object') return used;
+  for (const key of ['walls', 'nodes', 'wires', 'links', 'doors']) {
+    const list = data[key];
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (item && typeof item.id === 'string' && item.id) used.add(item.id);
+    }
+  }
+  for (const n of data.nodes || []) {
+    if (n && n.deviceType === 'breakerBox' && Array.isArray(n.breakers)) {
+      for (const br of n.breakers) {
+        if (br && typeof br.id === 'string' && br.id) used.add(br.id);
+      }
+    }
+  }
+  return used;
+}
+
+// 生成 prefix+数字 形式的可用 id：数字取同前缀已用 id 的最大数字 +1，若该 id 已被
+// 占用（任意类型）则继续 +1，直到找到空位。如已有 w9 则下一个墙 id 为 w10
+export function genId(data, prefix) {
+  const used = collectUsedIds(data);
+  const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
+  let max = 0;
+  for (const id of used) {
+    const m = re.exec(id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  let n = max + 1;
+  while (used.has(prefix + n)) n++;
+  return prefix + n;
 }
 
 export function createEmptyData() {
@@ -58,9 +89,9 @@ export const DOOR_MIN_WIDTH = 0.4;
 export const DOOR_DEFAULT_WIDTH = 0.9;
 export const DOOR_DEFAULT_HEIGHT = 2.0;
 
-export function createDoor(wallId, pos, width, face) {
+export function createDoor(data, wallId, pos, width, face) {
   return {
-    id: genId('d'),
+    id: genId(data, 'd'),
     wall: wallId,
     pos,
     width: width || DOOR_DEFAULT_WIDTH,
@@ -69,9 +100,9 @@ export function createDoor(wallId, pos, width, face) {
   };
 }
 
-export function createWall(x1, z1, x2, z2) {
+export function createWall(data, x1, z1, x2, z2) {
   return {
-    id: genId('w'),
+    id: genId(data, 'w'),
     start: [x1, z1],
     end: [x2, z2],
     height: 2.8,
@@ -81,9 +112,9 @@ export function createWall(x1, z1, x2, z2) {
 
 // pos 为沿墙的 0~1 归一化坐标（0=墙起点端，1=墙终点端），与墙长无关；
 // 墙在电路编辑/预览中被派生拆分时，pos 始终相对于原始整墙
-export function createNode(type, wallId, face, pos, height, deviceType) {
+export function createNode(data, type, wallId, face, pos, height, deviceType) {
   return {
-    id: genId('n'),
+    id: genId(data, 'n'),
     type,
     wall: wallId,
     face,
@@ -94,15 +125,15 @@ export function createNode(type, wallId, face, pos, height, deviceType) {
   };
 }
 
-export function createWire(from, to) {
-  return { id: genId('e'), from, to, label: '' };
+export function createWire(data, from, to) {
+  return { id: genId(data, 'e'), from, to, label: '' };
 }
 
 // 强电箱是一种特殊设备：作为设备节点存放在 nodes 中，断路器挂在节点上
 // pos 同样为沿墙的 0~1 归一化坐标
-export function createBreakerBox(wallId, face, pos) {
+export function createBreakerBox(data, wallId, face, pos) {
   return {
-    id: genId('bb'),
+    id: genId(data, 'bb'),
     type: 'device',
     deviceType: 'breakerBox',
     wall: wallId,
@@ -119,7 +150,7 @@ export function createBreakerBox(wallId, face, pos) {
 // 初始坐标取箱体值，实际位置由 syncTerminals() 统一计算
 export function createBreakerTerminals(data, box) {
   const mk = () => {
-    const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
+    const node = createNode(data, 'terminal', box.wall, box.face, box.pos, box.height);
     node.label = '强电箱端子';
     data.nodes.push(node);
     return node.id;
@@ -154,7 +185,7 @@ export function normalizeData(data) {
     const box = data.breakerBox;
     data.nodes = data.nodes || [];
     data.nodes.push({
-      id: box.id || genId('bb'),
+      id: box.id || genId(data, 'bb'),
       type: 'device',
       deviceType: 'breakerBox',
       wall: box.wall,
@@ -170,7 +201,7 @@ export function normalizeData(data) {
     const first = data.walls[0];
     const box = findBreakerBox(data);
     if (!box) {
-      data.nodes.push(createBreakerBox(first.id, 1, 0.5));
+      data.nodes.push(createBreakerBox(data, first.id, 1, 0.5));
     } else if (!data.walls.some(w => w.id === box.wall)) {
       box.wall = first.id;
       box.face = 1;
@@ -222,7 +253,7 @@ function migrateBreakerTerminals(data) {
     const keep = oldId ? data.nodes.find(n => n.id === oldId) : null;
     const keepLeft = keep && br.side !== 'right'; // side 缺省按旧默认行为归左侧
     const fresh = () => {
-      const node = createNode('terminal', box.wall, box.face, box.pos, box.height);
+      const node = createNode(data, 'terminal', box.wall, box.face, box.pos, box.height);
       node.label = '强电箱端子';
       data.nodes.push(node);
       return node.id;
@@ -281,7 +312,7 @@ function migrateRoomsV3toV4(data) {
 export function addLink(data, a, b) {
   if (!data.links) data.links = [];
   if (data.links.some(l => (l.a === a && l.b === b) || (l.a === b && l.b === a))) return null;
-  const link = { id: genId('l'), a, b };
+  const link = { id: genId(data, 'l'), a, b };
   data.links.push(link);
   return link;
 }

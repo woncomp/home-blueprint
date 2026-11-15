@@ -154,7 +154,7 @@ test('死端短墙：主墙两段在接点侧分别连接到短墙的正确面',
   assert.ok(sameView(adjAt.left, { wallId: 'stub', face: 0, seg: null }));
 });
 
-// ---------- 死端短墙脚点与共线房间分界端点重合（用户反馈 wmvq1yvjt_6 场景） ----------
+// ---------- 死端短墙脚点与共线房间分界端点重合（用户反馈 w16 场景） ----------
 // 拓扑：方形外圈 + 北房间（被贯通分界墙 nd 隔成两间）+ 短墙 stub 与北房间东墙 n3
 // 共线：n3 (4,-3)→(4,0) 与 stub (4,0)→(4,1) 形成一条穿过主墙 w1 的连续直线。
 // w1 在接点 x=4 处 A 面（北）侧房间从北房间B 突变为 null，但接点仍是死端短墙接点。
@@ -218,8 +218,8 @@ test('死端短墙脚点与共线房间分界重合：宿主房间面仍在接�
 });
 
 // ---------- 默认布局端到端（读取真实 data/default.json） ----------
-// 户型：客厅为大 L 形，卧室A 由 w4/wmvnptgj9_1/wmvnptk6r_2/w3 段2 围成。
-// wmvnptk6r_2 的 A 面朝客厅（显示反向，左边界=end 接 w3），是切点两侧房间不同的典型场景
+// 户型：客厅为大 L 形，卧室A 由 w4/w5/w6/w3 段2 围成。
+// w6 的 A 面朝客厅（显示反向，左边界=end 接 w3），是切点两侧房间不同的典型场景
 
 function defaultPlan() {
   const data = JSON.parse(readFileSync(new URL('../data/default.json', import.meta.url), 'utf8'));
@@ -259,38 +259,38 @@ function totalFaceRanges(plan) {
   return n;
 }
 
-test('默认布局精确回归：wmvnptk6r_2/A 左邻 = w3/B 客厅侧范围（左边界为死端短墙接点）', () => {
+test('默认布局精确回归：w6/A 左邻 = w3/B 客厅侧范围（左边界为死端短墙接点）', () => {
   const plan = defaultPlan();
-  const adj = adjacentWallViews(plan.walls, plan.wallSegments, 'wmvnptk6r_2', 0, null, plan.faceNav);
+  const adj = adjacentWallViews(plan.walls, plan.wallSegments, 'w6', 0, null, plan.faceNav);
   // 左边界 = end (1.8, 3.7)，接 w3 的 t≈0.8 切点；须取切点左侧客厅侧的 B 面范围，
-  // 该范围左边界是死端短墙 wmvq1z1em_7 的 T 接点（t≈0.1422），不得取到外侧 A 面或卧室侧
+  // 该范围左边界是死端短墙 w17 的 T 接点（t≈0.1422），不得取到外侧 A 面或卧室侧
   assert.ok(adj.left, '应能找到左邻');
   assert.equal(adj.left.wallId, 'w3');
   assert.equal(adj.left.face, 1);
   assert.equal(adj.left.seg.index, 1);
   assert.ok(Math.abs(adj.left.seg.t0 - (9 - 7.720125314968435) / 9) < 1e-6);
   assert.ok(Math.abs(adj.left.seg.t1 - 0.8) < 1e-6);
-  // 右边界 = start (1.8, 2.355)，接 wmvnptgj9_1 的客厅侧 A 面
-  assert.equal(adj.right.wallId, 'wmvnptgj9_1');
+  // 右边界 = start (1.8, 2.355)，接 w5 的客厅侧 A 面
+  assert.equal(adj.right.wallId, 'w5');
   assert.equal(adj.right.face, 0);
 });
 
-test('默认布局客厅闭环：从 wmvnptk6r_2/A 连续向左经 12 个视图回到起点（环绕两根死端短墙）', () => {
+test('默认布局客厅闭环：从 w6/A 连续向左经 12 个视图回到起点（环绕两根死端短墙）', () => {
   const plan = defaultPlan();
-  const start = { wallId: 'wmvnptk6r_2', face: 0, seg: null };
+  const start = { wallId: 'w6', face: 0, seg: null };
   const expected = [
-    'wmvnptk6r_2/A 整面',
-    'w3/B 段2',                 // [0.1422, 0.8]，客厅侧（左边界即死端短墙 wmvq1z1em_7 接点）
-    'wmvq1z1em_7/A 整面',       // 死端短墙 A 面（伸入客厅）
-    'wmvq1z1em_7/B 整面',       // 短墙自由端背面相邻：面环绕自由端回弹到另一面
+    'w6/A 整面',
+    'w3/B 段2',                 // [0.1422, 0.8]，客厅侧（左边界即死端短墙 w17 接点）
+    'w17/A 整面',       // 死端短墙 A 面（伸入客厅）
+    'w17/B 整面',       // 短墙自由端背面相邻：面环绕自由端回弹到另一面
     'w3/B 段1',                 // [0, 0.1422]，客厅侧
     'w2/B 整面',
-    'w1/B 段2',                 // [0.8556, 1]，客厅侧（左边界即死端短墙 wmvq1yvjt_6 接点）
-    'wmvq1yvjt_6/A 整面',       // 死端短墙 A 面（与北房间东墙共线穿过 w1）
-    'wmvq1yvjt_6/B 整面',
+    'w1/B 段2',                 // [0.8556, 1]，客厅侧（左边界即死端短墙 w16 接点）
+    'w16/A 整面',       // 死端短墙 A 面（与北房间东墙共线穿过 w1）
+    'w16/B 整面',
     'w1/B 段1',                 // [0, 0.8556]，客厅侧（跨贯通 T 接点 0.3506 合并）
     'w4/B 段2',                 // 客厅侧面范围 [0.3597, 1]
-    'wmvnptgj9_1/A 整面',
+    'w5/A 整面',
   ];
   const maxSteps = totalFaceRanges(plan) + 1;
   const loop = [start];
@@ -316,7 +316,7 @@ test('默认布局客厅闭环：从 wmvnptk6r_2/A 连续向左经 12 个视图�
 
 test('默认布局闭环互逆：每对相邻视图 left/right 互为反函数，右行成反向环', () => {
   const plan = defaultPlan();
-  const start = { wallId: 'wmvnptk6r_2', face: 0, seg: null };
+  const start = { wallId: 'w6', face: 0, seg: null };
   // 先走出向左环（末元素为回到的起点，去掉后按环取模配对）
   const loop = [start];
   let cur = start;
@@ -365,22 +365,22 @@ test('默认布局当前段终点不串房间：w3/B 客厅段右端不在 t=0.8
   const v = { wallId: 'w3', face: 1, seg: { id: segLiving.id, wallId: 'w3', index: segLiving.index, t0: segLiving.t0, t1: segLiving.t1 } };
   const adj = adjacentWallViews(plan.walls, plan.wallSegments, v.wallId, v.face, v.seg, plan.faceNav);
   // 左端（死端短墙接点）：邻墙是短墙的客厅侧 A 面，不得猜到其他墙/卧室侧
-  assert.ok(sameView(adj.left, { wallId: 'wmvq1z1em_7', face: 0, seg: null }));
-  // 右端 t=0.8 是卧室切点：邻墙仍须是客厅侧 wmvnptk6r_2/A，不串到卧室A侧
-  assert.ok(sameView(adj.right, { wallId: 'wmvnptk6r_2', face: 0, seg: null }));
-  // 卧室侧范围 [0.8, 1] 同一切点的另一侧：邻墙须落在卧室A侧（wmvnptk6r_2/B）
+  assert.ok(sameView(adj.left, { wallId: 'w17', face: 0, seg: null }));
+  // 右端 t=0.8 是卧室切点：邻墙仍须是客厅侧 w6/A，不串到卧室A侧
+  assert.ok(sameView(adj.right, { wallId: 'w6', face: 0, seg: null }));
+  // 卧室侧范围 [0.8, 1] 同一切点的另一侧：邻墙须落在卧室A侧（w6/B）
   const segBed = buildFaceRanges(planSegs, 1)
     .find(r => Math.abs(r.t0 - 0.8) < 1e-6);
   assert.ok(segBed, '应存在卧室侧范围');
   const vb = { wallId: 'w3', face: 1, seg: { id: segBed.id, wallId: 'w3', index: segBed.index, t0: segBed.t0, t1: segBed.t1 } };
   const adjB = adjacentWallViews(plan.walls, plan.wallSegments, vb.wallId, vb.face, vb.seg, plan.faceNav);
-  assert.ok(sameView(adjB.left, { wallId: 'wmvnptk6r_2', face: 1, seg: null }));
+  assert.ok(sameView(adjB.left, { wallId: 'w6', face: 1, seg: null }));
 });
 
 test('默认布局 T 型宿主墙合并：w1/B 跨贯通 T 接点合并，死端短墙接点强制分组', () => {
   const plan = defaultPlan();
   // w1 被两个接点拆成 3 个逻辑段：贯通 T 接点（t≈0.3506，stem 分割房间）客厅侧房间
-  // 不变 → 仍跨接点合并；死端短墙接点（t≈0.8556，wmvq1yvjt_6）→ 两面强制分组。
+  // 不变 → 仍跨接点合并；死端短墙接点（t≈0.8556，w16）→ 两面强制分组。
   // 注意默认户型 w1 长 9m（终点 x=9），短墙接点在 x=7.7 即 t=7.7/9
   const w1Ranges = buildFaceRanges(segmentsForWall(plan.wallSegments, 'w1'), 1);
   assert.equal(w1Ranges.length, 2);
@@ -399,7 +399,7 @@ test('默认布局 T 型宿主墙合并：w1/B 跨贯通 T 接点合并，死端
   // w1/B 东段左端即短墙接点：邻墙是短墙 A 面，可双向切回
   const v = { wallId: 'w1', face: 1, seg: { id: east.id, wallId: 'w1', index: east.index, t0: east.t0, t1: east.t1 } };
   const adjE = adjacentWallViews(plan.walls, plan.wallSegments, v.wallId, v.face, v.seg, plan.faceNav);
-  assert.ok(sameView(adjE.left, { wallId: 'wmvq1yvjt_6', face: 0, seg: null }));
+  assert.ok(sameView(adjE.left, { wallId: 'w16', face: 0, seg: null }));
 });
 
 test('T/X 接点候选消歧：墙数组顺序不影响邻墙结果', () => {

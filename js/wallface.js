@@ -738,7 +738,7 @@ export class WallFaceDialog {
         if (err) {
           this.cbs.onNotify && this.cbs.onNotify(err);
         } else {
-          this.data.wires.push(createWire(a.id, node.id));
+          this.data.wires.push(createWire(this.data, a.id, node.id));
         }
         this.wirePending = null;
         this.changed();
@@ -799,7 +799,7 @@ export class WallFaceDialog {
       this.snapGuideH = snapped !== rawH ? snapped : null;
       const height = snapped;
       const type = ['socket', 'switch', 'light'].includes(this.tool) ? 'device' : this.tool;
-      const node = createNode(type, this.wallId, this.face, round4(this.tOf(local, av)), round2(height), this.tool);
+      const node = createNode(this.data, type, this.wallId, this.face, round4(this.tOf(local, av)), round2(height), this.tool);
       this.data.nodes.push(node);
       this.selectedNodeId = node.id;
       this.changed();
@@ -1111,7 +1111,7 @@ export class WallFaceDialog {
             this.cbs.onNotify && this.cbs.onNotify('只能在当前墙面创建镜像节点');
             return;
           }
-          const nn = createNode('turn', self.wall, self.face === 0 ? 1 : 0, self.pos, self.height);
+          const nn = createNode(this.data, 'turn', self.wall, self.face === 0 ? 1 : 0, self.pos, self.height);
           this.data.nodes.push(nn);
           addLink(this.data, self.id, nn.id);
         } else {

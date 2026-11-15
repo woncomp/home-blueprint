@@ -667,7 +667,7 @@ export class Plan2D {
       if (!e.altKey) t = round1(t);
       const hw = 0.45; // 默认门宽 0.9m 的半宽
       t = Math.max(hw, Math.min(wallLen(wall) - hw, t));
-      const door = createDoor(wall.id, t);
+      const door = createDoor(this.data(), wall.id, t);
       this.data().doors.push(door);
       // 单次添加：先回到选择工具，再选中新门，避免工具切换覆盖最终选择
       this.setTool('select');
@@ -963,7 +963,7 @@ export class Plan2D {
       this.updateHint();
       return;
     }
-    const wall = createWall(p1[0], p1[1], p2[0], p2[1]);
+    const wall = createWall(this.data(), p1[0], p1[1], p2[0], p2[1]);
     this.data().walls.push(wall);
     this.drawP1 = null; this.previewP2 = null;
     this.onWallAdded(wall);   // 首堵墙自动在中点放置强电箱

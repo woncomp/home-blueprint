@@ -48,7 +48,7 @@ const plan2d = new Plan2D({
   onWallAdded: wall => {
     // 首堵墙创建后自动在墙中点建立强电箱（特殊设备节点）；pos 为 0~1 归一化坐标
     if (!findBreakerBox(app.data)) {
-      app.data.nodes.push(createBreakerBox(wall.id, 1, 0.5));
+      app.data.nodes.push(createBreakerBox(app.data, wall.id, 1, 0.5));
     }
   },
 });
@@ -186,7 +186,7 @@ panel.on('addBreaker', () => {
   const box = findBreakerBox(app.data);
   if (!box) return;
   const terminals = createBreakerTerminals(app.data, box);
-  box.breakers.push({ id: genId('b'), label: `断路器 ${box.breakers.length + 1}`, terminals });
+  box.breakers.push({ id: genId(app.data, 'b'), label: `断路器 ${box.breakers.length + 1}`, terminals });
   refresh();
 });
 // 面板拖拽排序：只重排数组（端子 id、接线引用不变），端子高度随新序号由 refresh 内的 syncTerminals 重算

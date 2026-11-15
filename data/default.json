@@ -54,7 +54,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnptgj9_1",
+      "id": "w5",
       "start": [
         0,
         2.368980709073006
@@ -67,7 +67,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnptk6r_2",
+      "id": "w6",
       "start": [
         1.8,
         2.3551219847144145
@@ -80,7 +80,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpuss5_3",
+      "id": "w7",
       "start": [
         0,
         0
@@ -93,7 +93,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpuvgv_4",
+      "id": "w8",
       "start": [
         0,
         -3.8
@@ -106,7 +106,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpuwxr_5",
+      "id": "w9",
       "start": [
         7.7,
         -3.8
@@ -119,7 +119,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpv2bb_6",
+      "id": "w10",
       "start": [
         3.1557032504818143,
         -3.8
@@ -132,7 +132,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpvb35_7",
+      "id": "w11",
       "start": [
         0,
         2.368980709073006
@@ -145,7 +145,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpvcpa_8",
+      "id": "w12",
       "start": [
         -3.6,
         2.368980709073006
@@ -158,7 +158,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpveox_9",
+      "id": "w13",
       "start": [
         -3.6,
         -1.0999999999999996
@@ -171,7 +171,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpvmyn_a",
+      "id": "w14",
       "start": [
         -1.0933443245175098,
         2.368980709073006
@@ -184,7 +184,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvnpvoep_b",
+      "id": "w15",
       "start": [
         -1.0933443245175098,
         0.6000000000000001
@@ -197,7 +197,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvq1yvjt_6",
+      "id": "w16",
       "start": [
         7.7,
         0
@@ -210,7 +210,7 @@
       "thickness": 0.2
     },
     {
-      "id": "wmvq1z1em_7",
+      "id": "w17",
       "start": [
         7.720125314968435,
         3.6999999999999997
@@ -239,7 +239,7 @@
           "label": "插座-客厅",
           "terminals": {
             "left": "t1",
-            "right": "nmvo1bisg_1"
+            "right": "n8"
           }
         },
         {
@@ -247,7 +247,7 @@
           "label": "卧室插座",
           "terminals": {
             "left": "t2",
-            "right": "nmvo1bisg_2"
+            "right": "n9"
           }
         },
         {
@@ -255,15 +255,15 @@
           "label": "插座-路由器",
           "terminals": {
             "left": "t3",
-            "right": "nmvo1bisg_3"
+            "right": "n10"
           }
         },
         {
-          "id": "bmvnq1vse_i",
+          "id": "b4",
           "label": "插座-换鞋凳",
           "terminals": {
-            "left": "nmvnq1vse_h",
-            "right": "nmvo1bisg_4"
+            "left": "n1",
+            "right": "n11"
           }
         }
       ]
@@ -345,7 +345,7 @@
       "label": "卧室B插座"
     },
     {
-      "id": "nmvnq1vse_h",
+      "id": "n1",
       "type": "terminal",
       "wall": "w4",
       "face": 1,
@@ -354,9 +354,9 @@
       "label": "强电箱端子"
     },
     {
-      "id": "nmvnu2mv9_1",
+      "id": "n2",
       "type": "device",
-      "wall": "wmvnptgj9_1",
+      "wall": "w5",
       "face": 0,
       "pos": 0.1564,
       "height": 0.47,
@@ -364,9 +364,9 @@
       "label": "换鞋凳"
     },
     {
-      "id": "nmvnu2oax_2",
+      "id": "n3",
       "type": "device",
-      "wall": "wmvnptgj9_1",
+      "wall": "w5",
       "face": 0,
       "pos": 0.6727,
       "height": 2.61,
@@ -374,7 +374,7 @@
       "label": "路由器"
     },
     {
-      "id": "nmvnu3fmi_5",
+      "id": "n4",
       "type": "turn",
       "wall": "w4",
       "face": 1,
@@ -383,9 +383,9 @@
       "label": ""
     },
     {
-      "id": "nmvnu7kyf_8",
+      "id": "n5",
       "type": "device",
-      "wall": "wmvnptk6r_2",
+      "wall": "w6",
       "face": 0,
       "pos": 0.4956,
       "height": 1.4,
@@ -393,7 +393,7 @@
       "label": "餐边柜"
     },
     {
-      "id": "nmvnu7tvt_9",
+      "id": "n6",
       "type": "device",
       "wall": "w3",
       "face": 1,
@@ -403,16 +403,16 @@
       "label": "监控"
     },
     {
-      "id": "nmvnu8hwv_a",
+      "id": "n7",
       "type": "turn",
-      "wall": "wmvnptgj9_1",
+      "wall": "w5",
       "face": 0,
       "pos": 0.4898,
       "height": 2.14,
       "label": ""
     },
     {
-      "id": "nmvo1bisg_1",
+      "id": "n8",
       "type": "terminal",
       "wall": "w4",
       "face": 1,
@@ -421,7 +421,7 @@
       "label": "强电箱端子"
     },
     {
-      "id": "nmvo1bisg_2",
+      "id": "n9",
       "type": "terminal",
       "wall": "w4",
       "face": 1,
@@ -430,7 +430,7 @@
       "label": "强电箱端子"
     },
     {
-      "id": "nmvo1bisg_3",
+      "id": "n10",
       "type": "terminal",
       "wall": "w4",
       "face": 1,
@@ -439,7 +439,7 @@
       "label": "强电箱端子"
     },
     {
-      "id": "nmvo1bisg_4",
+      "id": "n11",
       "type": "terminal",
       "wall": "w4",
       "face": 1,
@@ -448,7 +448,7 @@
       "label": "强电箱端子"
     },
     {
-      "id": "nmvq1y50t_4",
+      "id": "n12",
       "type": "device",
       "wall": "w3",
       "face": 1,
@@ -458,7 +458,7 @@
       "label": "空调后面"
     },
     {
-      "id": "nmvq24ami_1",
+      "id": "n13",
       "type": "device",
       "wall": "w3",
       "face": 1,
@@ -468,9 +468,9 @@
       "label": "电脑"
     },
     {
-      "id": "nmvq26qoo_4",
+      "id": "n14",
       "type": "device",
-      "wall": "wmvnptk6r_2",
+      "wall": "w6",
       "face": 0,
       "pos": 0.5105,
       "height": 0.47,
@@ -478,7 +478,7 @@
       "label": "餐边柜内"
     },
     {
-      "id": "nmvq52bv7_3",
+      "id": "n15",
       "type": "device",
       "wall": "w1",
       "face": 1,
@@ -488,7 +488,7 @@
       "label": ""
     },
     {
-      "id": "nmvq52e0k_4",
+      "id": "n16",
       "type": "device",
       "wall": "w1",
       "face": 1,
@@ -498,7 +498,7 @@
       "label": ""
     },
     {
-      "id": "nmvq531po_8",
+      "id": "n17",
       "type": "device",
       "wall": "w1",
       "face": 1,
@@ -508,9 +508,9 @@
       "label": ""
     },
     {
-      "id": "nmvq53vbh_a",
+      "id": "n18",
       "type": "device",
-      "wall": "wmvq1yvjt_6",
+      "wall": "w16",
       "face": 0,
       "pos": 0.6916,
       "height": 0.93,
@@ -518,18 +518,18 @@
       "label": ""
     },
     {
-      "id": "nmvq547kh_b",
+      "id": "n19",
       "type": "turn",
-      "wall": "wmvq1yvjt_6",
+      "wall": "w16",
       "face": 0,
       "pos": 0.3379,
       "height": 0.93,
       "label": ""
     },
     {
-      "id": "nmvq54lu0_d",
+      "id": "n20",
       "type": "turn",
-      "wall": "wmvq1yvjt_6",
+      "wall": "w16",
       "face": 1,
       "pos": 0.2653,
       "height": 0.93,
@@ -538,123 +538,123 @@
   ],
   "wires": [
     {
-      "id": "emvnu2t6c_3",
+      "id": "e1",
       "from": "t3",
-      "to": "nmvnu2oax_2",
+      "to": "n3",
       "label": ""
     },
     {
-      "id": "emvnu3is0_6",
-      "from": "nmvnq1vse_h",
-      "to": "nmvnu3fmi_5",
+      "id": "e2",
+      "from": "n1",
+      "to": "n4",
       "label": ""
     },
     {
-      "id": "emvnu3x6d_7",
-      "from": "nmvnu3fmi_5",
-      "to": "nmvnu2mv9_1",
+      "id": "e3",
+      "from": "n4",
+      "to": "n2",
       "label": ""
     },
     {
-      "id": "emvnu8mru_b",
+      "id": "e4",
       "from": "t1",
-      "to": "nmvnu8hwv_a",
+      "to": "n7",
       "label": ""
     },
     {
-      "id": "emvnu8odr_c",
-      "from": "nmvnu8hwv_a",
-      "to": "nmvnu7kyf_8",
+      "id": "e5",
+      "from": "n7",
+      "to": "n5",
       "label": ""
     },
     {
-      "id": "emvq1xw74_2",
+      "id": "e6",
       "from": "s1",
-      "to": "nmvnu7tvt_9",
+      "to": "n6",
       "label": ""
     },
     {
-      "id": "emvq1y8x6_5",
+      "id": "e7",
       "from": "s2",
-      "to": "nmvq1y50t_4",
+      "to": "n12",
       "label": ""
     },
     {
-      "id": "emvq24hms_2",
+      "id": "e8",
       "from": "s1",
-      "to": "nmvq24ami_1",
+      "to": "n13",
       "label": ""
     },
     {
-      "id": "emvq24iu4_3",
-      "from": "nmvq24ami_1",
+      "id": "e9",
+      "from": "n13",
       "to": "s2",
       "label": ""
     },
     {
-      "id": "emvq272lc_5",
-      "from": "nmvnu7kyf_8",
-      "to": "nmvq26qoo_4",
+      "id": "e10",
+      "from": "n5",
+      "to": "n14",
       "label": ""
     },
     {
-      "id": "emvq279du_6",
+      "id": "e11",
       "from": "s1",
-      "to": "nmvq26qoo_4",
+      "to": "n14",
       "label": ""
     },
     {
-      "id": "emvq51gla_1",
-      "from": "nmvo1bisg_1",
+      "id": "e12",
+      "from": "n8",
       "to": "k2b",
       "label": ""
     },
     {
-      "id": "emvq5271k_2",
+      "id": "e13",
       "from": "k2b",
       "to": "s3",
       "label": ""
     },
     {
-      "id": "emvq52ji4_5",
+      "id": "e14",
       "from": "k2b",
-      "to": "nmvq52bv7_3",
+      "to": "n15",
       "label": ""
     },
     {
-      "id": "emvq52lza_6",
-      "from": "nmvq52e0k_4",
-      "to": "nmvq52bv7_3",
+      "id": "e15",
+      "from": "n16",
+      "to": "n15",
       "label": ""
     },
     {
-      "id": "emvq52ptc_7",
-      "from": "nmvq52e0k_4",
+      "id": "e16",
+      "from": "n16",
       "to": "s4",
       "label": ""
     },
     {
-      "id": "emvq53844_9",
-      "from": "nmvq52bv7_3",
-      "to": "nmvq531po_8",
+      "id": "e17",
+      "from": "n15",
+      "to": "n17",
       "label": ""
     },
     {
-      "id": "emvq54a9f_c",
-      "from": "nmvq53vbh_a",
-      "to": "nmvq547kh_b",
+      "id": "e18",
+      "from": "n18",
+      "to": "n19",
       "label": ""
     },
     {
-      "id": "emvq54xma_e",
+      "id": "e19",
       "from": "s4",
-      "to": "nmvq54lu0_d",
+      "to": "n20",
       "label": ""
     },
     {
-      "id": "emvq54z6r_f",
-      "from": "nmvq54lu0_d",
-      "to": "nmvq547kh_b",
+      "id": "e20",
+      "from": "n20",
+      "to": "n19",
       "label": ""
     }
   ],
@@ -674,7 +674,7 @@
       "height": 2
     },
     {
-      "id": "dmvnpw22d_c",
+      "id": "d2",
       "wall": "w1",
       "pos": 3.9,
       "width": 0.9,
@@ -682,7 +682,7 @@
       "height": 2
     },
     {
-      "id": "dmvnpw37e_d",
+      "id": "d3",
       "wall": "w4",
       "pos": 2.8,
       "width": 0.9,
@@ -690,16 +690,16 @@
       "height": 2
     },
     {
-      "id": "dmvnpw4hm_e",
-      "wall": "wmvnpvmyn_a",
+      "id": "d4",
+      "wall": "w14",
       "pos": 1.2,
       "width": 0.9,
       "face": 0,
       "height": 2
     },
     {
-      "id": "dmvnpw5s4_f",
-      "wall": "wmvnptgj9_1",
+      "id": "d5",
+      "wall": "w5",
       "pos": 0.9,
       "width": 0.9,
       "face": 0,
@@ -707,24 +707,24 @@
     }
   ],
   "rooms": {
-    "w1|w2|w3|wmvq1z1em_7|w3|wmvnptk6r_2|wmvnptgj9_1|w4|w1|wmvq1yvjt_6": {
+    "w1|w2|w3|w17|w3|w6|w5|w4|w1|w16": {
       "name": "客厅"
     },
-    "w1|wmvnpuwxr_5|wmvnpuvgv_4|wmvnpv2bb_6": {
+    "w1|w9|w8|w10": {
       "name": "主卧"
     },
-    "w1|wmvnpuss5_3|wmvnpuvgv_4|wmvnpv2bb_6": {
+    "w1|w7|w8|w10": {
       "name": "次卧"
     },
-    "w4|wmvnpuss5_3|wmvnpveox_9|wmvnpvcpa_8|wmvnpvoep_b|wmvnpvmyn_a|wmvnpvb35_7": {
+    "w4|w7|w13|w12|w15|w14|w11": {
       "name": "厨房",
       "offsetx": -0.0975,
       "offsety": -0.201
     },
-    "wmvnpvb35_7|wmvnpvcpa_8|wmvnpvoep_b|wmvnpvmyn_a": {
+    "w11|w12|w15|w14": {
       "name": "卫生间"
     },
-    "w3|w4|wmvnptgj9_1|wmvnptk6r_2": {
+    "w3|w4|w5|w6": {
       "name": "卧室A"
     }
   }
