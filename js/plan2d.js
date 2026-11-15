@@ -341,7 +341,7 @@ export class Plan2D {
   // 提示文案按工具状态统一生成，经 onHint 交给主程序，由右侧“信息”面板在无选择时展示
   updateHint() {
     const hints = {
-      select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；拖动房间名称可调整其位置；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
+      select: '单击墙、门、控制点或房间地面选中（房间可在右侧面板命名）；在房间内部按住拖动可平移画布；拖动房间名称可调整其位置；拖动墙身平移、端点/交点调形、门沿墙移动（靠近其他墙可换墙）、强电箱沿墙拖动；Delete 删除选中',
       ortho: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '正交画墙：点击起点（自动锁定水平/竖直，Alt 关闭吸附）',
       free: this.drawP1 ? '点击第二个端点完成画墙（Esc 取消）' : '任意画墙：点击起点（可任意角度，Alt 关闭吸附）',
       door: '添加门：点击一堵墙，在点击位置开门（0.1m 吸附，Alt 关闭）；Esc 退出',
@@ -354,7 +354,8 @@ export class Plan2D {
     if (this.tool === 'ortho' || this.tool === 'free' || this.tool === 'door') c = 'crosshair';
     else if (this.drag && this.drag.type === 'pan') c = 'grabbing';
     else if (this.drag && this.drag.type === 'roomLabel') c = 'move';
-    else if (this.hover) c = (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door' || this.hover.type === 'room') ? 'pointer' : 'move';
+    else if (this.hover) c = this.hover.type === 'room' ? 'grab'
+      : (this.hover.type === 'handle' || this.hover.type === 'box' || this.hover.type === 'door') ? 'pointer' : 'move';
     this.svg.style.cursor = c;
   }
 
@@ -644,7 +645,9 @@ export class Plan2D {
       }
       const room = this.pickRoom(w);
       if (room) {
-        this.selectRoom(room.key);
+        // 选中延迟到抬起时：按下只挂起平移，未移动才判定为点选房间
+        this.drag = { type: 'pan', lastSx: sx, lastSy: sy, moved: false, roomKey: room.key };
+        this.updateCursor();
         return;
       }
       this.drag = { type: 'pan', lastSx: sx, lastSy: sy, moved: false };
@@ -868,7 +871,11 @@ export class Plan2D {
     if (!d) return;
     this.drag = null;
     if (d.type === 'pan') {
-      if (!d.moved) this.selectWall(null); // 单击空白清除选择
+      if (!d.moved) {
+        // 抬起时判定点选：房间地面选中房间，空白处清除选择
+        if (d.roomKey) this.selectRoom(d.roomKey);
+        else this.selectWall(null);
+      }
       this.updateCursor();
       this.render();
       return;
