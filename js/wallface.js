@@ -7,6 +7,7 @@ import {
   detectRooms, buildWallSegments, adjacentWallViews,
   DEVICE_TYPES, NODE_TYPE_NAMES, findBreakerBox, BREAKER_BOX_SIZE, BREAKER_SIDE_INSET, breakerTerminalHeight,
   clipDoorToSeg, DOOR_DEFAULT_HEIGHT, deviceDisplayColor,
+  wallParamNear, WALL_JOIN_EPS,
 } from './model.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -501,6 +502,27 @@ export class WallFaceDialog {
     return seam;
   }
 
+  // 对端节点不在三墙视图中时，虚线从本视图哪条竖直边出去：
+  // 对端墙贴本视图段起点侧 → local 0 对应的显示边缘，贴段终点侧 → local len 对应的显示边缘；
+  // 两端都贴（共线重叠）或都不贴（对墙/远端）时退回就近边缘
+  stubExitX(vs, selfPx, other) {
+    const wall = vs.wall;
+    const otherWall = (this.data.walls || []).find(w => w.id === other.wall);
+    if (otherWall && other.wall !== wall.id) {
+      const t0 = vs.seg ? vs.seg.t0 : 0;
+      const t1 = vs.seg ? vs.seg.t1 : 1;
+      const px = t => wall.start[0] + (wall.end[0] - wall.start[0]) * t;
+      const pz = t => wall.start[1] + (wall.end[1] - wall.start[1]) * t;
+      const tol = Math.max(WALL_JOIN_EPS, ((wall.thickness || 0.2) + (otherWall.thickness || 0.2)) / 2);
+      const at0 = wallParamNear(otherWall, px(t0), pz(t0), tol) != null;
+      const at1 = wallParamNear(otherWall, px(t1), pz(t1), tol) != null;
+      if (at0 && !at1) return this.posX(vs, 0);
+      if (at1 && !at0) return this.posX(vs, vs.len);
+    }
+    const mid = vs.baseX + vs.w / 2;
+    return selfPx < mid ? vs.baseX : vs.baseX + vs.w;
+  }
+
   renderWires() {
     const nodesById = new Map(this.data.nodes.map(n => [n.id, n]));
     for (const wire of this.data.wires) {
@@ -538,7 +560,8 @@ export class WallFaceDialog {
           ...(seam != null ? {} : { 'stroke-dasharray': '6 4' }),
         });
       } else {
-        // 一端不可见：虚线引到本段边界（同墙截断到段端点，跨墙引到面板边缘）
+        // 一端不可见：虚线按与实线一致的横平竖直策略（中点折角）引到本段边界
+        // （同墙截断到段端点；跨墙按墙端邻接定向，贴不上退回就近边缘）
         const self = va ? a : b;
         const other = va ? b : a;
         const vs = va || vb;
@@ -549,13 +572,14 @@ export class WallFaceDialog {
         if (other.wall === vs.wallId) {
           x2 = this.posX(vs, clamp(this.localOf(other, vs), 0, vs.len));
         } else {
-          const mid = vs.baseX + vs.w / 2;
-          x2 = x1 < mid ? vs.baseX : vs.baseX + vs.w;
+          x2 = this.stubExitX(vs, x1, other);
         }
-        hit = el('line', { x1, y1, x2, y2, class: 'wire-hit', 'data-wireid': wire.id });
-        line = el('line', {
-          x1, y1, x2, y2, class: 'wire-line',
-          stroke: color, 'stroke-width': width, 'stroke-dasharray': '6 4',
+        const mx = (x1 + x2) / 2;
+        const pts = `${x1},${y1} ${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+        hit = el('polyline', { points: pts, fill: 'none', class: 'wire-hit', 'data-wireid': wire.id });
+        line = el('polyline', {
+          points: pts, fill: 'none', class: 'wire-line', stroke: color, 'stroke-width': width,
+          'stroke-dasharray': '6 4',
         });
       }
       if (this.mode === 'edit') {
@@ -588,8 +612,7 @@ export class WallFaceDialog {
       } else if (other.wall === vs.wallId) {
         x2 = this.posX(vs, clamp(this.localOf(other, vs), 0, vs.len));
       } else {
-        const mid = vs.baseX + vs.w / 2;
-        x2 = x1 < mid ? vs.baseX : vs.baseX + vs.w;
+        x2 = this.stubExitX(vs, x1, other);
       }
       const y2 = this.heightY(other.height);
       const path = el('path', {

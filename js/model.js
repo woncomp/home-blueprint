@@ -279,7 +279,7 @@ export function nodeWorldPos(node, wallsById) {
 export const WALL_JOIN_EPS = 0.02; // 墙端/墙身交接判定容差（米）
 
 // 点 P 在墙线段上的最近参数 t（0~1，按墙长归一）；距离超过 tol 返回 null
-function wallParamNear(wall, px, pz, tol) {
+export function wallParamNear(wall, px, pz, tol) {
   const len = wallLen(wall);
   if (!(len > 0)) return null;
   const [dx, dz] = wallDir(wall);
