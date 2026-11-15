@@ -7,7 +7,7 @@ import { computeCircuits, CIRCUIT_COLORS } from '../js/model.js';
 
 function makeData() {
   return {
-    version: 3,
+    version: 4,
     walls: [{ id: 'w1', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.2 }],
     nodes: [
       { id: 'bb', type: 'device', deviceType: 'breakerBox', wall: 'w1', face: 1, pos: 0.5, height: 1.6, label: '强电箱',

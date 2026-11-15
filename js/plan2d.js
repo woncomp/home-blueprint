@@ -1,7 +1,7 @@
 // 户型编辑：2D 顶视图墙体编辑器（SVG）
 // 职责：视图缩放/平移、画墙（正交/任意）、墙身/端点/交点拖动、
 // 端点重合与 T 型连接联动、吸附、校验与提交（通过回调与主程序协作）
-import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE, detectRooms, pointInRoom, resolveRoomNames, roomLabelPoint, roomLabelUV, roomBBox } from './model.js';
+import { createWall, createDoor, wallLen, wallDir, findBreakerBox, DOOR_MIN_WIDTH, BREAKER_BOX_SIZE, detectRooms, pointInRoom, resolveRoomNames, roomLabelPoint, roomLabelUV, roomBBox, getRoomRecord, ensureRoomRecord, pruneRoomRecord } from './model.js';
 
 const SNAP_PX = 10;      // 吸附半径（屏幕像素）
 const GRID = 0.1;        // 网格吸附步长（米）
@@ -587,16 +587,19 @@ export class Plan2D {
     const w = this.toWorld(sx, sy);
 
     if (this.tool === 'select') {
-      // 房间名标签：按下即进入拖动（元素级判定，优先于几何拾取）
+      // 房间名标签：按下即进入拖动（元素级判定，优先于几何拾取）。
+      // 拖动写入 rooms[key].offsetx/offsety（相对质心的包围盒比例偏移），界面仍按 0~1 展示
       const labelEl = e.target && e.target.closest ? e.target.closest('.plan-room-label') : null;
       if (labelEl) {
         const room = (this.rooms || []).find(r => r.key === labelEl.dataset.roomKey);
         if (room) {
-          const orig = (this.data().roomLabelPos || {})[room.key] || null;
+          const rec = getRoomRecord(this.data(), room.key);
           this.selectRoom(room.key);
           this.drag = {
             type: 'roomLabel', roomKey: room.key, startW: w, bbox: roomBBox(room),
-            startUV: roomLabelUV(room, this.data()), orig, cur: orig,
+            centroidUV: roomLabelUV(room, {}),
+            startOff: rec ? [rec.offsetx || 0, rec.offsety || 0] : [0, 0],
+            orig: rec ? { offsetx: rec.offsetx, offsety: rec.offsety } : null,
             cursor: [sx, sy], dimText: null,
           };
           this.updateCursor();
@@ -744,15 +747,19 @@ export class Plan2D {
     }
 
     if (d.type === 'roomLabel') {
-      // 名称标签拖动：指针位移换算为包围盒 0~1 归一化坐标，0.01 吸附（Alt 关闭），回到 0.5/0.5 清除记录
+      // 名称标签拖动：指针位移换算为相对质心的偏移（包围盒比例），0.01 吸附（Alt 关闭），
+      // 显示位置 u/v = 质心 + 偏移（clamp 到 0~1）；偏移归零时清除记录
       let du = (w[0] - d.startW[0]) / d.bbox.w, dv = (w[1] - d.startW[1]) / d.bbox.d;
       if (!e.altKey) { du = Math.round(du * 100) / 100; dv = Math.round(dv * 100) / 100; }
-      const u = Math.min(1, Math.max(0, d.startUV[0] + du));
-      const v = Math.min(1, Math.max(0, d.startUV[1] + dv));
-      d.cur = [u, v];
-      const all = this.data().roomLabelPos || (this.data().roomLabelPos = {});
-      if (u === 0.5 && v === 0.5) delete all[d.roomKey];
-      else all[d.roomKey] = d.cur;
+      const [cu, cv] = d.centroidUV;
+      const u = Math.min(1, Math.max(0, cu + d.startOff[0] + du));
+      const v = Math.min(1, Math.max(0, cv + d.startOff[1] + dv));
+      const ox = Math.round((u - cu) * 100) / 100;
+      const oy = Math.round((v - cv) * 100) / 100;
+      const rec = ensureRoomRecord(this.data(), d.roomKey);
+      if (ox) rec.offsetx = ox; else delete rec.offsetx;
+      if (oy) rec.offsety = oy; else delete rec.offsety;
+      pruneRoomRecord(this.data(), d.roomKey);
       d.dimText = `名称位置 ${u.toFixed(2)}, ${v.toFixed(2)}`;
       this.render();
       return;
@@ -896,7 +903,10 @@ export class Plan2D {
       const door = (this.data().doors || []).find(x => x.id === d.doorId);
       changed = !!door && (door.pos !== d.orig.pos || door.wall !== d.orig.wall);
     } else if (d.type === 'roomLabel') {
-      changed = JSON.stringify(d.cur) !== JSON.stringify(d.orig);
+      const rec = getRoomRecord(this.data(), d.roomKey);
+      const cur = rec ? [rec.offsetx || 0, rec.offsety || 0] : [0, 0];
+      const orig = d.orig ? [d.orig.offsetx || 0, d.orig.offsety || 0] : [0, 0];
+      changed = cur[0] !== orig[0] || cur[1] !== orig[1];
     }
     this.updateCursor();
     this.render();
@@ -914,11 +924,15 @@ export class Plan2D {
       const door = (this.data().doors || []).find(x => x.id === d.doorId);
       if (door) { door.wall = d.orig.wall; door.pos = d.orig.pos; }
     } else if (d.type === 'roomLabel') {
-      const all = this.data().roomLabelPos;
-      if (all) {
-        if (d.orig) all[d.roomKey] = d.orig;
-        else delete all[d.roomKey];
+      const rec = ensureRoomRecord(this.data(), d.roomKey);
+      if (d.orig) {
+        rec.offsetx = d.orig.offsetx;
+        rec.offsety = d.orig.offsety;
+      } else {
+        delete rec.offsetx;
+        delete rec.offsety;
       }
+      pruneRoomRecord(this.data(), d.roomKey);
     }
     this.drag = null;
   }

@@ -42,14 +42,14 @@ export function genId(prefix) {
 
 export function createEmptyData() {
   return {
-    version: 3,
+    version: 4,
     walls: [],
     nodes: [],
     wires: [],
     links: [],
     doors: [],
-    roomNames: {},
-    roomNameHints: [],
+    rooms: {},          // 房间键 -> { name?, offsetx?, offsety? }，见 resolveRoomNames/roomLabelPoint
+    roomNameHints: [],  // 全局默认命名规则（按面积降序消费）
   };
 }
 
@@ -199,6 +199,17 @@ export function normalizeData(data) {
     migrateBreakerTerminals(data);
     data.version = 3;
   }
+  // v3→v4：roomNames/roomLabelPos 合并为 rooms（房间键从坐标键切换为围墙 ID 键，
+  // 标签偏移从包围盒 0~1 坐标切换为相对质心的包围盒比例偏移）。
+  // 迁移按当前墙体重新检测房间，建立“旧坐标键 → 新墙 ID 键”映射，失效旧记录自动丢弃。
+  if (data && typeof data.version === 'number' && data.version < 4) {
+    migrateRoomsV3toV4(data);
+    data.version = 4;
+  }
+  // v4 数据缺 rooms 字段时补空对象（如手工构造的 version:4 JSON），保证下游读写一致
+  if (data && (data.rooms == null || typeof data.rooms !== 'object' || Array.isArray(data.rooms))) {
+    data.rooms = {};
+  }
   return data;
 }
 
@@ -226,6 +237,45 @@ function migrateBreakerTerminals(data) {
     delete br.terminal;
     delete br.side;
   }
+}
+
+// v3→v4：把 roomNames / roomLabelPos 合并进 rooms。
+// 按当前墙体重新检测房间，用房间上的旧坐标键（coordKey）找到对应的新墙 ID 键；
+// 标签偏移从包围盒 0~1 坐标 [u,v] 换算为相对质心的比例偏移（offsetx = u - 质心U）。
+// 不再对应任何房间的旧记录自动丢弃；多个旧记录映射到同一个新键时保留先出现的并告警。
+function migrateRoomsV3toV4(data) {
+  const oldNames = (data.roomNames && typeof data.roomNames === 'object') ? data.roomNames : {};
+  const oldPos = (data.roomLabelPos && typeof data.roomLabelPos === 'object') ? data.roomLabelPos : {};
+  const rooms = {};
+  if (Array.isArray(data.walls) && data.walls.length) {
+    for (const room of detectRooms(data.walls).rooms) {
+      const rec = {};
+      const name = oldNames[room.coordKey];
+      if (typeof name === 'string' && name) rec.name = name;
+      const pos = oldPos[room.coordKey];
+      if (Array.isArray(pos) && pos.length === 2 &&
+          Number.isFinite(pos[0]) && Number.isFinite(pos[1])) {
+        const b = roomBBox(room);
+        let cx = 0, cz = 0;
+        for (const [x, z] of room.points) { cx += x; cz += z; }
+        cx /= room.points.length; cz /= room.points.length;
+        const ox = Math.round((pos[0] - (cx - b.minX) / b.w) * 10000) / 10000;
+        const oy = Math.round((pos[1] - (cz - b.minZ) / b.d) * 10000) / 10000;
+        if (ox) rec.offsetx = ox;
+        if (oy) rec.offsety = oy;
+      }
+      if (!Object.keys(rec).length) continue;
+      if (rooms[room.key]) {
+        console.warn('[migrateRoomsV3toV4] 多个旧房间记录映射到同一房间键，仅保留先出现的',
+          { key: room.key, dropped: rec });
+        continue;
+      }
+      rooms[room.key] = rec;
+    }
+  }
+  data.rooms = rooms;
+  delete data.roomNames;
+  delete data.roomLabelPos;
 }
 
 export function addLink(data, a, b) {
@@ -597,7 +647,7 @@ function polygonArea(pts) {
 }
 
 function canonicalKey(pts) {
-  // 旋转到字典序最小的起点，正向/反向取较小者，形成稳定 key
+  // 旋转到字典序最小的起点，正向/反向取较小者，形成稳定 key（旧坐标键，仅供 v3 数据迁移）
   const strs = pts.map(p => vkey(p));
   let bestIdx = 0;
   for (let i = 1; i < strs.length; i++) {
@@ -611,6 +661,54 @@ function canonicalKey(pts) {
   }
   const a = seqA.join('|'), b = seqB.join('|');
   return a < b ? a : b;
+}
+
+// 墙 ID 序列规范化：相邻重复（同一墙被 T/X 切分出的连续原子边）只留一个——
+// 键只依赖围墙关系，不依赖墙被切成几段；遍历起点落在墙中部时首尾是同墙的两段
+// （环状相邻），同样合并。循环起点、正反向取字典序最小者。
+export function canonicalWallKey(ids) {
+  const seq = [];
+  for (const id of ids) {
+    if (seq[seq.length - 1] !== id) seq.push(id);
+  }
+  while (seq.length > 1 && seq[0] === seq[seq.length - 1]) seq.pop();
+  if (!seq.length) return '';
+  let bestIdx = 0;
+  for (let i = 1; i < seq.length; i++) {
+    if (seq[i] < seq[bestIdx]) bestIdx = i;
+  }
+  const n = seq.length;
+  const seqA = [], seqB = [];
+  for (let i = 0; i < n; i++) {
+    seqA.push(seq[(bestIdx + i) % n]);
+    seqB.push(seq[(bestIdx - i + n) % n]);
+  }
+  const a = seqA.join('|'), b = seqB.join('|');
+  return a < b ? a : b;
+}
+
+// 房间键去重：不同房间意外生成完全相同的围墙序列时不能静默覆盖——
+// 从第二个起追加 #2、#3… 后缀并告警。返回与输入等长的键数组（null 原样保留）。
+export function assignRoomKeys(rawKeys) {
+  const counts = new Map();   // 基础键 -> 出现次数（null 以外的全部）
+  for (const k of rawKeys) {
+    if (k == null) continue;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const seen = new Map();     // 基础键 -> 已分配个数
+  const warned = new Set();
+  return rawKeys.map(k => {
+    if (k == null) return null;
+    if ((counts.get(k) || 0) < 2) return k;
+    const i = seen.get(k) || 0;
+    seen.set(k, i + 1);
+    if (i === 0) return k; // 第一个保留基础键
+    if (!warned.has(k)) {
+      warned.add(k);
+      console.warn('[assignRoomKeys] 多个房间生成相同围墙序列，追加后缀消歧', { key: k });
+    }
+    return `${k}#${i + 1}`;
+  });
 }
 
 export function detectRooms(walls) {
@@ -665,6 +763,7 @@ export function detectRooms(walls) {
   // 最左转面遍历
   const visited = new Set();
   const faces = [];
+  const faceWallIds = []; // 每个面环经过的原始墙 ID（与 faces 下标对齐，含相邻重复）
   const halfFace = new Map(); // 有向半边 → 面序号（记录每条半边左侧的房间面）
   const halfNext = new Map(); // 有向半边 → 同一面环上的后继半边（遍历顺序即环序）
   for (const e of edgeInfos) {
@@ -672,6 +771,7 @@ export function detectRooms(walls) {
       const halfKey = kFrom + '>' + kTo;
       if (visited.has(halfKey)) continue;
       const pts = [];
+      const wallIds = [];
       const faceIdx = faces.length;
       let curFrom = kFrom, curTo = kTo;
       let guard = 0;
@@ -689,12 +789,14 @@ export function detectRooms(walls) {
         const nextOther = next.e.a === curTo ? next.e.b : next.e.a;
         halfNext.set(curFrom + '>' + curTo, curTo + '>' + nextOther);
         pts.push([vt.x, vt.z]);
+        wallIds.push(next.e.wallId);
         curFrom = curTo;
         curTo = nextOther;
         if (curFrom === kFrom && curTo === kTo) break;
       }
       // 退化环（悬空墙两侧往返，仅 2 点）也占一个面序号，保证 halfFace/halfNext 与 faces 对齐
       faces.push(pts);
+      faceWallIds.push(wallIds);
     }
   }
 
@@ -706,14 +808,16 @@ export function detectRooms(walls) {
   for (let i = 1; i < faces.length; i++) {
     if (areas[i] > areas[exteriorIdx]) exteriorIdx = i;
   }
-  const faceKey = faces.map((f, i) => {
+  // 房间键 = 面环经过的原始墙 ID 序列（canonicalWallKey 规范化）：移动墙身、调整墙长、
+  // 拖动端点、墙数组顺序/遍历方向变化都不改变键；键冲突（异常重复围墙序列）追加 #2 后缀消歧
+  const faceKey = assignRoomKeys(faces.map((f, i) => {
     if (areas[i] < 0.5 || i === exteriorIdx) return null; // 微面与外平面不算房间
-    return canonicalKey(f);
-  });
+    return canonicalWallKey(faceWallIds[i]);
+  }));
   const roomIdx = faces.map((f, i) => i)
     .filter(i => faceKey[i] != null)
     .sort((a, b) => areas[b] - areas[a]);
-  const rooms = roomIdx.map(i => ({ pts: faces[i], area: areas[i] }));
+  const rooms = roomIdx.map(i => ({ pts: faces[i], area: areas[i], wallIds: faceWallIds[i], faceIndex: i }));
   // 每条墙子段的 A面/B面 侧房间：半边 a→b（与墙同向）左侧是 A面侧，b→a 左侧是 B面侧
   const segRooms = new Map(); // wallId -> [{t0, t1, left, right}]
   for (const e of edgeInfos) {
@@ -740,9 +844,12 @@ export function detectRooms(walls) {
   }
   return {
     rooms: rooms.map(f => ({
-      key: canonicalKey(f.pts),
+      key: faceKey[f.faceIndex],
       points: f.pts,
       area: f.area,
+      wallIds: f.wallIds,
+      // 旧坐标键：仅 v3→v4 迁移用来配对旧 roomNames/roomLabelPos 记录，勿作房间标识
+      coordKey: canonicalKey(f.pts),
     })),
     segRooms,
     faceNav: {
@@ -957,35 +1064,73 @@ export function pointInRoom(x, z, room) {
   return inside;
 }
 
+// ---------- 房间数据（rooms：用户可编辑信息的唯一持久化入口） ----------
+// rooms 只保存用户可编辑的信息：名称、标签偏移。房间面积/顶点/墙面归属由 walls 实时计算。
+// 键为 detectRooms 生成的围墙 ID 键（canonicalWallKey），2D/3D/右侧面板统一经以下辅助函数读写，
+// 避免各自直接操作 data.rooms[key] 造成字段遗漏。
+
+// 读取房间记录（纯读取，不存在返回 null）
+export function getRoomRecord(data, roomKey) {
+  const rooms = data && data.rooms;
+  if (!rooms || typeof rooms !== 'object') return null;
+  return rooms[roomKey] || null;
+}
+
+// 取房间记录，不存在时创建空记录（写路径专用；读路径请用 getRoomRecord）
+export function ensureRoomRecord(data, roomKey) {
+  const rooms = data.rooms || (data.rooms = {});
+  return rooms[roomKey] || (rooms[roomKey] = {});
+}
+
+// 记录无任何字段时移除（保持 JSON 精简；调用方在删除 name/offset 后调用）
+export function pruneRoomRecord(data, roomKey) {
+  const rec = getRoomRecord(data, roomKey);
+  if (rec && typeof rec === 'object' && !Object.keys(rec).length) delete data.rooms[roomKey];
+}
+
 // 房间显示名：显式命名 > 按面积降序分配 roomNameHints > 兜底“房间N”。
-// hint 分配会写入 data.roomNames（沿用 3D 标签的既有行为，导出 JSON 时成为显式命名）。
+// hint 分配会写入 data.rooms[key].name（沿用 3D 标签的既有行为，导出 JSON 时成为显式命名）。
 // 返回 Map<room.key, 显示名>，名称与 rooms 数组顺序无关（兜底序号按传入数组下标）。
 export function resolveRoomNames(data, rooms) {
-  const names = data.roomNames || (data.roomNames = {});
   const hints = [...(data.roomNameHints || [])];
   const sorted = [...rooms].sort((a, b) => b.area - a.area);
   for (const room of sorted) {
-    if (!names[room.key] && hints.length) names[room.key] = hints.shift();
+    if (!hints.length) break;
+    const existing = getRoomRecord(data, room.key);
+    if (existing && existing.name) continue;
+    // 只在真正写入 hint 名时创建记录，避免渲染给无记录房间留下空对象
+    ensureRoomRecord(data, room.key).name = hints.shift();
   }
   const result = new Map();
   rooms.forEach((room, i) => {
-    result.set(room.key, names[room.key] || `房间${i + 1}`);
+    const rec = getRoomRecord(data, room.key);
+    result.set(room.key, (rec && rec.name) || `房间${i + 1}`);
   });
   return result;
 }
 
-// 房间名称显示位置：roomLabelPos 记录 0~1 归一化坐标（相对房间包围盒，[0.5,0.5] 为盒中心），
-// 房间尺寸变化时标签按相同比例跟随；未记录时退回多边形质心。返回世界坐标 [x, z]。
-export function roomLabelPoint(room, data) {
-  const b = roomBBox(room);
-  const rec = (data.roomLabelPos || {})[room.key];
-  if (rec) return [b.minX + rec[0] * b.w, b.minZ + rec[1] * b.d];
+// 房间质心（顶点平均值，即默认标签锚点）
+function roomCentroid(room) {
   let cx = 0, cz = 0;
   for (const [x, z] of room.points) { cx += x; cz += z; }
   return [cx / room.points.length, cz / room.points.length];
 }
 
-// 当前显示位置的归一化坐标（无记录时为质心换算值），供拖动起点与面板回显。
+// 房间名称显示位置：offsetx/offsety 为相对质心的偏移，以房间包围盒宽/深为单位
+// （offsetx = 0.1 表示从质心向右移动包围盒宽度的 10%）；未记录时即质心。返回世界坐标 [x, z]。
+export function roomLabelPoint(room, data) {
+  const b = roomBBox(room);
+  const [cx, cz] = roomCentroid(room);
+  const rec = getRoomRecord(data, room.key);
+  if (rec) {
+    const ox = Number.isFinite(rec.offsetx) ? rec.offsetx : 0;
+    const oy = Number.isFinite(rec.offsety) ? rec.offsety : 0;
+    if (ox || oy) return [cx + ox * b.w, cz + oy * b.d];
+  }
+  return [cx, cz];
+}
+
+// 当前显示位置的归一化坐标（相对包围盒，无记录时为质心换算值），供拖动起点与面板回显。
 export function roomLabelUV(room, data) {
   const b = roomBBox(room);
   const [x, z] = roomLabelPoint(room, data);
@@ -1001,6 +1146,57 @@ export function roomBBox(room) {
     if (z > maxZ) maxZ = z;
   }
   return { minX, minZ, w: Math.max(maxX - minX, 1e-6), d: Math.max(maxZ - minZ, 1e-6) };
+}
+
+// 户型编辑后清理 rooms：键不变（移动墙身/调墙长/拖端点）时记录原样保留；
+// 键变化时按"唯一且明确的围墙交集"继承名称与偏移——一方几乎包含另一方（较小环的墙
+// 仅差一面不在交集中）且旧房间只匹配这一个新房间时才继承；只共享宿主墙/分隔壁的相邻房间、
+// 房间拆分/合并等一对多、多对一均不猜测，回默认名；
+// 已消失的房间删除对应记录。previousRooms/currentRooms 为 detectRooms().rooms 的前后两次输出。
+export function reconcileRooms(data, previousRooms, currentRooms) {
+  const store = data.rooms || (data.rooms = {});
+  const prevRooms = (previousRooms || []).filter(r => store[r.key]);
+  const curRooms = currentRooms || [];
+  // 是否构成继承候选：一方几乎包含另一方——较小环的墙几乎全在交集中（仅差一面，
+  // 挂/删短墙），且较小环 ≥3 面墙。只共享宿主墙/分隔壁的相邻房间互不包含，拆出的
+  // 小房间缺多面墙、合并出的大房间多出多面墙，都不构成候选
+  const isMatch = (prev, cur) => {
+    const prevIds = new Set(prev.wallIds || []);
+    const curIds = new Set(cur.wallIds || []);
+    let common = 0;
+    for (const id of curIds) if (prevIds.has(id)) common++;
+    const small = Math.min(prevIds.size, curIds.size);
+    if (small < 3) return false;
+    return common >= small - 1 && (common === prevIds.size || common === curIds.size);
+  };
+  // 每个旧房间匹配到几个"无记录的新房间"：>1 说明是拆分/复制，继承有歧义
+  const matchCount = new Map();
+  for (const pr of prevRooms) {
+    let n = 0;
+    for (const cr of curRooms) {
+      if (store[cr.key]) continue; // 已有记录（含同键）的不参与继承
+      if (isMatch(pr, cr)) n++;
+    }
+    matchCount.set(pr.key, n);
+  }
+  for (const cr of curRooms) {
+    if (store[cr.key]) continue; // 同键直接保留
+    let donor = null, donors = 0;
+    for (const pr of prevRooms) {
+      if (!isMatch(pr, cr)) continue;
+      donors++;
+      if (matchCount.get(pr.key) === 1) donor = pr; // 唯一明确的交集匹配
+    }
+    if (donor && donors === 1) {
+      store[cr.key] = store[donor.key];
+      delete store[donor.key];
+    }
+  }
+  // 已消失的房间：清理残留记录
+  const curKeys = new Set(curRooms.map(r => r.key));
+  for (const key of Object.keys(store)) {
+    if (!curKeys.has(key)) delete store[key];
+  }
 }
 
 // ---------- 线路计算 ----------
@@ -1102,11 +1298,24 @@ function isPoint(p) {
 // 电线与 links 对节点的引用、断路器端子引用，以及跨集合的核心实体 ID 唯一性
 export function validateData(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return '数据不是对象';
-  if (data.version !== 3) return `不支持的版本: ${data.version}`;
+  if (data.version !== 4) return `不支持的版本: ${data.version}`;
   if (!Array.isArray(data.walls) || !Array.isArray(data.nodes) || !Array.isArray(data.wires)) {
     return 'walls/nodes/wires 必须是数组';
   }
   if (data.links != null && !Array.isArray(data.links)) return 'links 必须是数组';
+  // rooms 只保存用户可编辑信息（名称、标签偏移），键为围墙 ID 键；记录结构必须合法
+  if (data.rooms != null) {
+    if (typeof data.rooms !== 'object' || Array.isArray(data.rooms)) return 'rooms 必须是对象';
+    for (const [rk, rec] of Object.entries(data.rooms)) {
+      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return `房间记录 ${rk} 无效`;
+      if (rec.name != null && typeof rec.name !== 'string') return `房间 ${rk} 的 name 必须是字符串`;
+      for (const f of ['offsetx', 'offsety']) {
+        if (rec[f] != null && (typeof rec[f] !== 'number' || !Number.isFinite(rec[f]))) {
+          return `房间 ${rk} 的 ${f} 必须是有限数值`;
+        }
+      }
+    }
+  }
 
   // 核心实体 ID 全局唯一（墙/节点/电线/门/连通共用一个命名空间）
   const seenIds = new Set();

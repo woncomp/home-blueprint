@@ -1,5 +1,5 @@
 // 右侧信息栏：强电箱 2D 布局 + 选中实体信息/属性编辑
-import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, findBreakerBox, roomLabelUV } from './model.js';
+import { DEVICE_TYPES, NODE_TYPE_NAMES, wallLen, findBreakerBox, roomLabelUV, getRoomRecord, ensureRoomRecord, pruneRoomRecord } from './model.js';
 
 export class Panel {
   constructor(dataProvider) {
@@ -404,20 +404,24 @@ export class Panel {
       wrap.appendChild(title);
       const room = (this.rooms || []).find(r => r.key === selection.id);
       if (room) addRow('面积', `${room.area.toFixed(2)} m²`);
-      const name = (data.roomNames || {})[selection.id] || '';
+      // 名称与位置都写入同一个 rooms[key] 记录；清空名称只删除 name，不触碰标签偏移
+      const rec = getRoomRecord(data, selection.id);
       const input = document.createElement('input');
       input.type = 'text';
-      input.value = name;
+      input.value = (rec && rec.name) || '';
       input.placeholder = '房间名称';
       input.addEventListener('change', () => {
-        if (!data.roomNames) data.roomNames = {};
-        if (input.value) data.roomNames[selection.id] = input.value;
-        else delete data.roomNames[selection.id]; // 清空名称：回到提示名/默认名
+        const r = ensureRoomRecord(data, selection.id);
+        if (input.value) r.name = input.value;
+        else delete r.name; // 清空名称：回到提示名/默认名
+        pruneRoomRecord(data, selection.id);
         this.emit('edited');
       });
       addRow('名称', input);
-      // 名称位置：0~1 归一化坐标（0.5 为房间包围盒中心），与户型编辑中拖动名称写入同一份数据
+      // 名称位置：界面继续展示 0~1 归一化坐标（0.5 为房间包围盒中心），
+      // 持久化为 rooms[key].offsetx/offsety（相对质心的包围盒比例偏移）
       const [curU, curV] = room ? roomLabelUV(room, data) : [0.5, 0.5];
+      const [cenU, cenV] = room ? roomLabelUV(room, {}) : [0.5, 0.5]; // 质心 UV
       const posRow = document.createElement('div');
       posRow.className = 'row';
       posRow.innerHTML = '<span class="k">名称位置 (0~1)</span>';
@@ -435,11 +439,15 @@ export class Panel {
         inp.addEventListener('change', () => {
           const v = parseFloat(inp.value);
           if (!(v >= 0)) return;
-          const all = data.roomLabelPos || (data.roomLabelPos = {});
-          const cur = all[selection.id] ? [...all[selection.id]] : [curU, curV];
-          cur[axis] = Math.min(1, Math.max(0, v));
-          if (cur[0] === 0.5 && cur[1] === 0.5) delete all[selection.id];
-          else all[selection.id] = cur;
+          const clamped = Math.min(1, Math.max(0, v));
+          const r = ensureRoomRecord(data, selection.id);
+          const off = axis === 0
+            ? Math.round((clamped - cenU) * 100) / 100
+            : Math.round((clamped - cenV) * 100) / 100;
+          const field = axis === 0 ? 'offsetx' : 'offsety';
+          if (off) r[field] = off;
+          else delete r[field];
+          pruneRoomRecord(data, selection.id);
           this.emit('edited');
         });
         return inp;

@@ -45,9 +45,9 @@ function assertParseError(text, pattern) {
   assert.throws(() => parseJsonText(text), e => pattern.test(e.message), `期望抛出 ${pattern}，实际输入: ${text.slice(0, 80)}`);
 }
 
-test('合法版本 2 数据解析后迁移为版本 3 双端子，核心内容保持不变', () => {
+test('合法版本 2 数据解析后迁移为版本 4 双端子，核心内容保持不变', () => {
   const data = parseJsonText(v2Text());
-  assert.equal(data.version, 3);
+  assert.equal(data.version, 4);
   assert.deepEqual(data.nodes.map(n => n.id), ['bb1', 't1', 'n2', 'n3', data.nodes[4].id]);
   assert.equal(data.wires[0].from, 't1');
   assert.equal(data.wires[0].to, 'n2');
@@ -97,7 +97,7 @@ test('合法版本 1 数据先完成坐标迁移，再正确生成双端子', ()
     wires: [{ id: 'e1', from: 'n1', to: 'n2', label: '' }],
   };
   const data = parseJsonText(JSON.stringify(v1));
-  assert.equal(data.version, 3);
+  assert.equal(data.version, 4);
   assert.ok(!('breakerBox' in data));
   assert.deepEqual(data.nodes.map(n => n.id), ['n1', 'n2', 'bb1', data.nodes[3].id]);
   // 4m 墙：2m → 0.5、3m → 0.75；顶层强电箱迁移进来的 pos 一并转换（新端子取箱体值，不再二次转换）
@@ -117,8 +117,8 @@ test('语法错误、非对象根节点、不支持的版本、缺失核心数�
   assertParseError('"布局"', /根节点必须是对象/);
   assertParseError('null', /根节点必须是对象/);
   assertParseError('42', /根节点必须是对象/);
-  const bad = makeV3(); bad.version = 4;
-  assertParseError(JSON.stringify(bad), /不支持的版本: 4/);
+  const bad = makeV3(); bad.version = 5;
+  assertParseError(JSON.stringify(bad), /不支持的版本: 5/);
   const missing = makeV3(); delete missing.walls;
   assertParseError(JSON.stringify(missing), /walls\/nodes\/wires 必须是数组/);
   const badLinks = makeV3(); badLinks.links = {};
@@ -181,7 +181,7 @@ test('links/doors 缺省的旧式数据仍可通过；导出的版本 3 不含�
 
 test('空户型（无墙无箱）可通过校验', () => {
   const data = parseJsonText(JSON.stringify(createEmptyData()));
-  assert.equal(data.version, 3);
+  assert.equal(data.version, 4);
   assert.equal(data.walls.length, 0);
 });
 

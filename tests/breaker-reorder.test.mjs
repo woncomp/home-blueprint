@@ -99,7 +99,7 @@ test('重排后 validateData 可通过：端子归属唯一、无重复引用', 
   const { validateData } = await import('../js/model.js');
   const box = makeBox(3);
   const data = {
-    version: 3,
+    version: 4,
     walls: [{ id: 'w1', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.2 }],
     nodes: [{ id: 'n1', type: 'device', deviceType: 'socket', wall: 'w1', face: 1, pos: 0.3, height: 0.3, label: '' }],
     wires: [], links: [], doors: [],

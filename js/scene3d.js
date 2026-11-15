@@ -164,7 +164,7 @@ export class Scene3D {
       this.staticGroup.add(mesh);
       this._pickables.push(mesh);
 
-      // 名称标签位置（与户型编辑拖动共用 roomLabelPos 0~1 归一化坐标）
+      // 名称标签位置（与户型编辑拖动共用 rooms[key].offsetx/offsety，相对质心的包围盒比例偏移）
       const [lx, lz] = roomLabelPoint(room, this.data);
       const name = names.get(room.key);
       let label;

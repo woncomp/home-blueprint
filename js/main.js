@@ -6,7 +6,7 @@ import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, parseJsonText, exportJsonText } from './persistence.js';
 import { JsonDialog } from './json-dialog.js';
-import { DEVICE_TYPES, createBreakerBox, createBreakerTerminals, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta, reorderBreakers } from './model.js';
+import { DEVICE_TYPES, createBreakerBox, createBreakerTerminals, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta, reorderBreakers, reconcileRooms, detectRooms } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -54,8 +54,17 @@ const plan2d = new Plan2D({
 });
 
 // ---------- 刷新 ----------
+// 上次刷新时检测出的房间：refresh 内与本次检测结果做 reconcile，继承/清理房间记录。
+// applyData 整体换入新数据时直接重置基线（导入数据自带迁移后的 rooms，不做跨数据继承）。
+let lastRooms = null;
+
 function refresh() {
   syncTerminals();
+  // 先 reconcile 再重建场景：继承的名称/偏移立即反映到本次 2D/3D 渲染。
+  // 与 scene3d.rebuild 内 detectRooms 输入相同，房间键一致
+  const current = detectRooms(app.data.walls).rooms;
+  reconcileRooms(app.data, lastRooms, current);
+  lastRooms = current;
   scene3d.updateData(app.data);
   refreshPanel();
   refreshToolbar();
@@ -144,6 +153,7 @@ function applyData(data) {
   scene3d.setSelection(null);
   plan2d.setSelection(null);
   scene3d.setData(data);
+  lastRooms = scene3d.rooms; // 新数据自带 rooms 记录，以此为基线，不做跨数据继承
   if (app.mode === 'plan') plan2d.fitView(); // 换入新数据时自动适应一次
   refreshPanel();
   refreshToolbar();
@@ -392,6 +402,7 @@ window.__wallface = wallface;
   app.data = await loadDefaultData();
   syncTerminals();
   scene3d.setData(app.data);
+  lastRooms = scene3d.rooms;
   setMode('view');
 
   let last = performance.now();

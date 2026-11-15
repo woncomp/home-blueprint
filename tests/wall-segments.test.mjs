@@ -180,7 +180,7 @@ test('段电路判断：只统计落在段范围内的节点', () => {
   assert.equal(segHasCircuit(data, circuits, far), false);
 });
 
-test('v1（米制 pos）→ v3 迁移：除以墙长、clamp、4 位小数', () => {
+test('v1（米制 pos）→ v4 迁移：除以墙长、clamp、4 位小数', () => {
   const data = {
     version: 1,
     walls: [
@@ -196,7 +196,7 @@ test('v1（米制 pos）→ v3 迁移：除以墙长、clamp、4 位小数', () 
     links: [],
   };
   normalizeData(data);
-  assert.equal(data.version, 3);
+  assert.equal(data.version, 4);
   assert.equal(data.nodes.find(n => n.id === 'n1').pos, 0.25);
   assert.equal(data.nodes.find(n => n.id === 'n2').pos, 0.75);
   assert.equal(data.nodes.find(n => n.id === 'n3').pos, 0.5);
@@ -206,9 +206,9 @@ test('v1（米制 pos）→ v3 迁移：除以墙长、clamp、4 位小数', () 
   assert.equal(validateData(data), null);
 });
 
-test('validateData：v3 要求 pos∈[0,1]，门仍是米数', () => {
+test('validateData：v4 要求 pos∈[0,1]，门仍是米数', () => {
   const base = {
-    version: 3,
+    version: 4,
     walls: [{ id: 'a', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.2 }],
     nodes: [],
     wires: [],

@@ -17,17 +17,23 @@ test('roomBBox 返回包围盒与宽高', () => {
   assert.deepEqual(roomBBox(room), { minX: 10, minZ: 20, w: 2, d: 4 });
 });
 
-test('0~1 归一化坐标映射到包围盒内（角点与中心）', () => {
-  const data = { roomLabelPos: { k1: [0, 0] } };
+test('offsetx/offsety 为相对质心的包围盒比例偏移（角点与中心）', () => {
+  // 质心恰为包围盒中心：偏移 ±0.5 即到达包围盒角点
+  const data = { rooms: { k1: { offsetx: -0.5, offsety: -0.5 } } };
   assert.deepEqual(roomLabelPoint(room, data), [10, 20]);
-  data.roomLabelPos.k1 = [1, 1];
+  data.rooms.k1 = { offsetx: 0.5, offsety: 0.5 };
   assert.deepEqual(roomLabelPoint(room, data), [12, 24]);
-  data.roomLabelPos.k1 = [0.25, 0.75];
+  data.rooms.k1 = { offsetx: -0.25, offsety: 0.25 };
   assert.deepEqual(roomLabelPoint(room, data), [10.5, 23]);
 });
 
+test('rooms 记录只有 name 时标签仍在质心（名称与偏移互不干扰）', () => {
+  const data = { rooms: { k1: { name: '客厅' } } };
+  assert.deepEqual(roomLabelPoint(room, data), [11, 22]);
+});
+
 test('roomLabelUV 与 roomLabelPoint 互逆；质心对矩形房间为 0.5/0.5', () => {
-  const data = { roomLabelPos: { k1: [0.3, 0.6] } };
+  const data = { rooms: { k1: { offsetx: -0.2, offsety: 0.1 } } };
   const uv = roomLabelUV(room, data);
   assert.ok(Math.abs(uv[0] - 0.3) < 1e-12 && Math.abs(uv[1] - 0.6) < 1e-12);
   const d2 = {};
@@ -40,7 +46,10 @@ test('非矩形房间：无记录取质心（非包围盒中心）', () => {
   const tri = { key: 'k2', points: [[0, 0], [4, 0], [0, 2]] };
   const [x, z] = roomLabelPoint(tri, {});
   assert.ok(Math.abs(x - 4 / 3) < 1e-12 && Math.abs(z - 2 / 3) < 1e-12);
-  // 归一化坐标仍相对包围盒
-  const uv = roomLabelUV(tri, { roomLabelPos: { k2: [0.5, 0.5] } });
-  assert.ok(Math.abs(uv[0] - 0.5) < 1e-12 && Math.abs(uv[1] - 0.5) < 1e-12);
+  // 偏移为 0 时归一化坐标即质心 UV（相对包围盒，非 0.5/0.5）
+  const uv = roomLabelUV(tri, { rooms: { k2: {} } });
+  assert.ok(Math.abs(uv[0] - 1 / 3) < 1e-12 && Math.abs(uv[1] - 1 / 3) < 1e-12);
+  // 有偏移时 UV = 质心 UV + 偏移
+  const uv2 = roomLabelUV(tri, { rooms: { k2: { offsetx: 0.1, offsety: -0.2 } } });
+  assert.ok(Math.abs(uv2[0] - (1 / 3 + 0.1)) < 1e-12 && Math.abs(uv2[1] - (1 / 3 - 0.2)) < 1e-12);
 });
