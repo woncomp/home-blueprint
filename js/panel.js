@@ -56,6 +56,12 @@ export class Panel {
       const item = document.createElement('div');
       item.className = 'breaker-item' + (this.highlightedBreaker === br.id ? ' highlighted' : '');
 
+      const handle = document.createElement('span');
+      handle.className = 'breaker-handle';
+      handle.textContent = '⋮⋮';
+      handle.title = '按住上下拖拽调整顺序';
+      item.appendChild(handle);
+
       const colorEl = document.createElement('span');
       colorEl.className = 'circuit-color';
       colorEl.style.background = circuit ? circuit.color : '#999';
@@ -111,6 +117,7 @@ export class Panel {
         }
         this.emit('refresh');
       });
+      this.attachDragHandlers(item, i, handle);
       this.breakerListEl.appendChild(item);
     });
 
@@ -119,6 +126,77 @@ export class Panel {
     addBtn.textContent = '＋ 添加断路器';
     addBtn.addEventListener('click', () => this.emit('addBreaker'));
     this.breakerListEl.appendChild(addBtn);
+  }
+
+  // 断路器拖拽排序：仅把手（⋮⋮）可发起拖拽，避免与单击高亮/双击改名冲突。
+  // 拖拽过程只操作 DOM（transform 位移 + 兄弟项让位），松手后才 emit reorderBreakers 改数据
+  attachDragHandlers(item, index, handle) {
+    // 把手点击不冒泡到 item，避免拖拽/点按把手时触发回路高亮
+    handle.addEventListener('click', e => e.stopPropagation());
+    let startY = 0, dragging = false, currentTo = index;
+
+    const siblingItems = () => [...this.breakerListEl.querySelectorAll('.breaker-item')];
+    // 相邻两项的垂直间距（item 高 + margin-bottom），作为一格的位移单位
+    const rowHeight = items => items.length > 1 ? items[1].offsetTop - items[0].offsetTop : item.offsetHeight + 5;
+
+    const layoutShift = () => {
+      const items = siblingItems();
+      const h = rowHeight(items);
+      for (let i = 0; i < items.length; i++) {
+        const el = items[i];
+        if (el === item) continue;
+        let shift = 0;
+        if (index < currentTo && i > index && i <= currentTo) shift = -h;
+        else if (index > currentTo && i >= currentTo && i < index) shift = h;
+        el.style.transform = shift ? `translateY(${shift}px)` : '';
+      }
+    };
+
+    const onMove = (e) => {
+      const dy = e.clientY - startY;
+      if (!dragging && Math.abs(dy) > 4) {
+        dragging = true;
+        item.classList.add('dragging');
+        for (const el of siblingItems()) if (el !== item) el.classList.add('drag-anim');
+      }
+      if (!dragging) return;
+      item.style.transform = `translateY(${dy}px)`;
+      // 目标插入位置：按拖动距离折合行数（指针在相邻项中心的哪一侧）
+      const items = siblingItems();
+      const h = rowHeight(items);
+      currentTo = Math.min(items.length - 1, Math.max(0, index + Math.round(dy / h)));
+      layoutShift();
+    };
+
+    const onUp = (e) => {
+      // 监听器挂在 pointerdown 时确定的 target（把手或 window 兜底）上
+      e.currentTarget.removeEventListener('pointermove', onMove);
+      e.currentTarget.removeEventListener('pointerup', onUp);
+      e.currentTarget.removeEventListener('pointercancel', onUp);
+      for (const el of siblingItems()) {
+        el.classList.remove('drag-anim');
+        el.style.transform = '';
+      }
+      item.classList.remove('dragging');
+      item.style.transform = '';
+      // 松手后由 refresh() 全量重渲染收尾；未超过阈值视为点按，不改数据
+      if (dragging && currentTo !== index) this.emit('reorderBreakers', { from: index, to: currentTo });
+      dragging = false;
+    };
+
+    handle.addEventListener('pointerdown', (e) => {
+      // 双击改名激活期间禁用拖拽
+      if (item.querySelector('.breaker-label-input')) return;
+      startY = e.clientY;
+      dragging = false;
+      currentTo = index;
+      // 捕获失败（合成事件/旧内核）时退到 window 监听，拖拽仍然可用
+      let target = handle;
+      try { handle.setPointerCapture(e.pointerId); } catch { target = window; }
+      target.addEventListener('pointermove', onMove);
+      target.addEventListener('pointerup', onUp);
+      target.addEventListener('pointercancel', onUp);
+    });
   }
 
   // ---------- 选中实体信息 ----------

@@ -131,6 +131,20 @@ export function findBreakerBox(data) {
   return (data.nodes || []).find(n => n.type === 'device' && n.deviceType === 'breakerBox') || null;
 }
 
+// 面板拖拽排序：把 box.breakers 中 from 下标的断路器移动到 to 下标（纯重排数组，
+// 端子 id 与接线引用全部不变，仅序号变化——序号决定箱体垂直位置与线路颜色）。
+// 下标非法或 from === to 时不做任何事；返回是否发生了移动
+export function reorderBreakers(box, from, to) {
+  if (!box || !Array.isArray(box.breakers)) return false;
+  const n = box.breakers.length;
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return false;
+  if (from < 0 || from >= n || to < 0 || to >= n) return false;
+  if (from === to) return false;
+  const [moved] = box.breakers.splice(from, 1);
+  box.breakers.splice(to, 0, moved);
+  return true;
+}
+
 // 旧版数据把强电箱存为顶层 breakerBox 对象，迁移为设备节点；
 // 强电箱是有且仅有一个、默认存在的特殊设备：有墙就必须有箱体，
 // 缺失时补建到第一堵墙中点，所在墙失效时重新挂靠

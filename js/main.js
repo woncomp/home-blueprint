@@ -6,7 +6,7 @@ import { WallFaceDialog } from './wallface.js';
 import { Plan2D } from './plan2d.js';
 import { loadDefaultData, parseJsonText, exportJsonText } from './persistence.js';
 import { JsonDialog } from './json-dialog.js';
-import { DEVICE_TYPES, createBreakerBox, createBreakerTerminals, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta } from './model.js';
+import { DEVICE_TYPES, createBreakerBox, createBreakerTerminals, wallLen, wallDir, genId, findBreakerBox, breakerTerminalHeight, breakerTerminalPosDelta, reorderBreakers } from './model.js';
 
 const canvas = document.getElementById('scene-canvas');
 const planSvg = document.getElementById('plan-svg');
@@ -178,6 +178,12 @@ panel.on('addBreaker', () => {
   const terminals = createBreakerTerminals(app.data, box);
   box.breakers.push({ id: genId('b'), label: `断路器 ${box.breakers.length + 1}`, terminals });
   refresh();
+});
+// 面板拖拽排序：只重排数组（端子 id、接线引用不变），端子高度随新序号由 refresh 内的 syncTerminals 重算
+panel.on('reorderBreakers', ({ from, to }) => {
+  const box = findBreakerBox(app.data);
+  if (!box) return;
+  if (reorderBreakers(box, from, to)) refresh();
 });
 panel.on('deleteWire', id => {
   app.data.wires = app.data.wires.filter(w => w.id !== id);
